@@ -12,11 +12,11 @@ import re
 import threading
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from io import BytesIO, StringIO
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -225,6 +225,19 @@ class Electrodes:
 #################
 #### GUI app ####
 #################
+
+#: Concurrent PDF renders allowed.  Rendering is GIL-bound, so a second
+#: worker adds no throughput -- it only adds GIL contention for the event
+#: loop (measured: a 90 ms IMRO generation took 210 ms beside one render, 320
+#: ms beside two).  Extra requests queue.
+PDF_RENDER_WORKERS = 1
+
+#: Dedicated pool for PDF renders, so they never block the event loop and
+#: never starve the default executor that atlas downloads run on.
+_pdf_executor = ThreadPoolExecutor(
+    max_workers=PDF_RENDER_WORKERS, thread_name_prefix="pixelmap-pdf"
+)
+
 
 class ChannelmapGUI(param.Parameterized):
     """Main GUI class for interactive channelmap generation using Bokeh"""
@@ -985,7 +998,8 @@ class ChannelmapGUI(param.Parameterized):
         content = "".join(content_lines)
         return StringIO(content)
 
-    def generate_pdf_content(self):
+    @pn.io.with_lock  # see _on_compute_anatomy_click; per-session, held across the await
+    async def generate_pdf_content(self):
         if not self.ready_to_download():
             return
 
@@ -1023,37 +1037,26 @@ class ChannelmapGUI(param.Parameterized):
             }
             survey_range = (self.survey_cmap.low, self.survey_cmap.high)
 
-        # Create memory buffer
-        buffer = BytesIO()
-
-        try:
-            # Make figure
-            title = self.filename_input.value
-            backend.plot_probe_layout(
-                self.probe_type,
-                self.imro_list,
-                self.positions_file,
-                self.wiring_file,
-                title,
-                figsize=(2, 30),
-                save_plot=False,
-                anatomy_bands=anatomy_bands,
-                survey_colors=survey_colors,
-                survey_range=survey_range,
-            )
-
-            # Save current figure to buffer
-            plt.savefig(buffer, format="pdf", dpi=300, bbox_inches="tight")
-            buffer.seek(0)
-
-        finally:
-            # No gc.collect() here: a full collection walks every live object
-            # in the process and froze the shared event loop (and every other
-            # session) for seconds per download.  Closing the figure drops
-            # pyplot's reference; the regular generational GC frees the rest.
-            plt.close('all')
-
-        return buffer
+        # Everything above reads session state and Bokeh models, so it stays
+        # on the event loop.  The render itself (~1 s for a 4-shank probe)
+        # runs on a worker thread with a standalone Figure -- no pyplot state
+        # -- so other sessions and the healthcheck keep running meanwhile.
+        #
+        # No gc.collect() afterwards: a full collection walks every live object
+        # in the process and froze every session for seconds per download.
+        render = functools.partial(
+            backend.probe_layout_pdf,
+            self.probe_type,
+            list(self.imro_list),
+            self.positions_file,
+            self.wiring_file,
+            self.filename_input.value,
+            figsize=(2, 30),
+            anatomy_bands=anatomy_bands,
+            survey_colors=survey_colors,
+            survey_range=survey_range,
+        )
+        return await asyncio.get_running_loop().run_in_executor(_pdf_executor, render)
 
     def generate_kilosort_channelmap(self):
         if not self.ready_to_download():
@@ -1443,9 +1446,9 @@ class ChannelmapGUI(param.Parameterized):
         self.anatomy_locator.object = ""
         self.anatomy_locator_section.visible = False
         self._update_tip_depth_readout()  # back to a blank readout
-        if self._locator_fig is not None:
-            plt.close(self._locator_fig)
-            self._locator_fig = None
+        # Not pyplot-managed (render_locator builds a bare Figure), so dropping
+        # the reference is all it takes to free it.
+        self._locator_fig = None
 
         # Hand back the atlas's RAM: nothing on screen needs it any more, and an
         # annotation volume is 308 MB for allen_mouse_25um and up to 4.8 GB for
