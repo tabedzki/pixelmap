@@ -239,6 +239,31 @@ _pdf_executor = ThreadPoolExecutor(
 )
 
 
+def _compute_imro(inputs: dict) -> list:
+    """Build the IMRO list from :meth:`ChannelmapGUI._imro_inputs`.
+
+    Pure -- no session state -- so downloads can run it on a worker thread.
+    """
+    imro_list = imro.generate_imro_channelmap(
+        probe_type=inputs["probe_type"],
+        custom_electrodes=np.array(inputs["selected"]),
+        wiring_file=inputs["wiring_file"],
+        layout_preset=None,
+        reference_id=inputs["reference_id"],
+        probe_subtype=inputs["probe_subtype"],
+        ap_gain=inputs["ap_gain"],
+        lf_gain=inputs["lf_gain"],
+        hp_filter=inputs["hp_filter"],
+    )
+
+    # In legacy mode, replace the part-number header with the legacy integer
+    probe_subtype = inputs["probe_subtype"]
+    if inputs["legacy"] and probe_subtype in PROBE_FEATURES:
+        legacy_id = PROBE_FEATURES[probe_subtype]["SpikeGLX_probe_type"]
+        imro_list[0] = (legacy_id, imro_list[0][1])
+    return imro_list
+
+
 class ChannelmapGUI(param.Parameterized):
     """Main GUI class for interactive channelmap generation using Bokeh"""
 
@@ -956,35 +981,43 @@ class ChannelmapGUI(param.Parameterized):
 
     def generate_imro(self):
         """Generate IMRO file from current selection"""
+        self.imro_list = _compute_imro(self._imro_inputs())
 
-        # Convert selection to array format
-        selected_array = np.array([[e.shank_id, e.electrode_id] for e in  self.electrodes.selected])
+    @pn.io.with_lock  # only called from locked callbacks; marked for test_no_unlocked_async_gui_callbacks
+    async def _generate_imro_async(self):
+        """:meth:`generate_imro`, with the computation on a worker thread.
 
-        # Generate IMRO list (always use string part number for feature lookup)
-        self.imro_list = imro.generate_imro_channelmap(
-            probe_type=self.probe_type,
-            custom_electrodes=selected_array,
-            wiring_file=self.wiring_file,
-            layout_preset=None,
-            reference_id=self.reference_id,
-            probe_subtype=self.probe_subtype,
-            ap_gain=self.ap_gain_input.value,
-            lf_gain=self.lf_gain_input.value,
-            hp_filter=self.hardware_hp_filter_on,
+        Inputs are snapshotted here on the event loop -- the selection is a
+        live set the loop may edit mid-compute -- and the result is assigned
+        back here too, so the worker never touches session state.
+        """
+        inputs = self._imro_inputs()
+        self.imro_list = await asyncio.get_running_loop().run_in_executor(
+            None, _compute_imro, inputs
         )
 
-        # In legacy mode, replace the part-number header with the legacy integer
-        if self.legacy_imro_mode and self.probe_subtype in PROBE_FEATURES:
-            legacy_id = PROBE_FEATURES[self.probe_subtype]["SpikeGLX_probe_type"]
-            self.imro_list[0] = (legacy_id, self.imro_list[0][1])
+    def _imro_inputs(self) -> dict:
+        """Everything IMRO generation reads from the session, copied."""
+        return {
+            "selected": [(e.shank_id, e.electrode_id) for e in self.electrodes.selected],
+            "probe_type": self.probe_type,
+            "wiring_file": self.wiring_file,
+            "reference_id": self.reference_id,
+            "probe_subtype": self.probe_subtype,
+            "ap_gain": self.ap_gain_input.value,
+            "lf_gain": self.lf_gain_input.value,
+            "hp_filter": self.hardware_hp_filter_on,
+            "legacy": self.legacy_imro_mode,
+        }
 
-    def generate_imro_content(self):
+    @pn.io.with_lock  # see _on_compute_anatomy_click; per-session, held across the await
+    async def generate_imro_content(self):
         if not self.ready_to_download():
             return
 
         # Update filename and generate IMRO list
         self.update_filename()
-        self.generate_imro()
+        await self._generate_imro_async()
 
         # Convert list to string
         content_lines = []
@@ -1005,7 +1038,7 @@ class ChannelmapGUI(param.Parameterized):
 
         # Update filename and generate IMRO list
         self.update_filename()
-        self.generate_imro()
+        await self._generate_imro_async()
 
         # Collect anatomy overlay data (if active)
         anatomy_bands = None
@@ -1058,18 +1091,18 @@ class ChannelmapGUI(param.Parameterized):
         )
         return await asyncio.get_running_loop().run_in_executor(_pdf_executor, render)
 
-    def generate_kilosort_channelmap(self):
+    @pn.io.with_lock  # see _on_compute_anatomy_click; per-session, held across the await
+    async def generate_kilosort_channelmap(self):
         if not self.ready_to_download():
             return
 
         # Update filename and generate IMRO list
         self.update_filename()
-        self.generate_imro()
+        await self._generate_imro_async()
 
-        # Generate Kilosort channelmap dictionary
-        kilosort_dict = backend.generate_kilosort_channelmap_dict(
-            self.imro_list,
-            self.positions_file
+        # Generate Kilosort channelmap dictionary (reads a CSV: off the loop too)
+        kilosort_dict = await asyncio.get_running_loop().run_in_executor(
+            None, backend.generate_kilosort_channelmap_dict, list(self.imro_list), self.positions_file
         )
 
         # Convert numpy arrays to lists for JSON serialization

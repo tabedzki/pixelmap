@@ -66,12 +66,12 @@ def _plot(gui, **kwargs):
 
 def _survey_kwargs(n_shanks):
     survey = {(s, e): "#%02x00ff" % ((e * 7) % 256) for s in range(n_shanks) for e in range(0, 1300, 3)}
-    return dict(survey_colors=survey, survey_range=(0.0, 1.0))
+    return {"survey_colors": survey, "survey_range": (0.0, 1.0)}
 
 
 def _anatomy_kwargs(n_shanks):
-    bands = [dict(shank_id=s, y_min=200, y_max=900, color="#33aa55", acronym="CA1") for s in range(n_shanks)]
-    return dict(anatomy_bands=bands)
+    bands = [{"shank_id": s, "y_min": 200, "y_max": 900, "color": "#33aa55", "acronym": "CA1"} for s in range(n_shanks)]
+    return {"anatomy_bands": bands}
 
 
 def _strip_creation_date(pdf: bytes) -> bytes:
