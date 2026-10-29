@@ -226,19 +226,19 @@ def generate_imro_channelmap(
     Generate IMRO-formatted channelmap for Neuropixels probes.
 
     Args:
-        probe_type: Type of probe ("1.0", "2.0-1shank", "2.0-4shanks", "NXT")
+        probe_type: Type of probe ("1.0", "2.0-1shank", "2.0-4shanks", "QuadBase")
         layout_preset: Preset layout configuration
         reference_id: Reference electrode selection ('External', 'Tip', 'Ground')
         probe_subtype: Specific SpikeGLX type number (optional)
         custom_electrodes: list of custom (shank_id, electrode_id) pairs (overrides preset)
-        positions_file: Path to positions CSV file
         wiring_file: Path to wiring CSV file
         ap_gain: AP band gain (for 1.0 probes)
         lf_gain: LF band gain (for 1.0 probes)
         hp_filter: High-pass filter setting (for 1.0 probes)
 
     Returns:
-        IMRO-formatted string for channelmap
+        IMRO list: a (probe_id, n_channels) header tuple followed by one tuple
+        per channel. Write it with save_to_imro_file().
     """
 
     # 1) Process probe type and load CSVs

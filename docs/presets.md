@@ -86,12 +86,16 @@ Select a preset from the dropdown menu. The probe visualization will update to s
 ### In Python
 
 ```python
+from pathlib import Path
+
 import pixelmap as cmg
+
+WIRING_DIR = Path(cmg.__file__).parent / "wiring_maps"
 
 imro_list = cmg.generate_imro_channelmap(
     probe_type="2.0-4shanks",
     layout_preset="tips_all",
-    wiring_file="wiring_maps/2.0-4shanks_wiring.csv"
+    wiring_file=WIRING_DIR / "2.0-4shanks_wiring.csv"
 )
 ```
 

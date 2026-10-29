@@ -104,16 +104,22 @@ ruff format .
 
 ## Adding New Probe Types
 
-To add support for a new probe (e.g., Quadbase, NXT):
+To add support for a new probe type:
 
-1. **Add wiring map**: Create `wiring_maps/<probe_type>_wiring.csv` defining electrode-to-ADC mappings
+1. **Add wiring map**: Create positions and wiring CSVs in `pixelmap/wiring_maps/` defining electrode coordinates and electrode-to-ADC mappings
 
-2. **Update constants**: In `constants.py`, add entries to:
-   - `PROBE_TYPE_MAP` - Probe groups and supported part numbers
-   - `PROBE_FEATURES` - Per-part-number electrode, shank and readout-channel counts
+2. **Update constants**: In `pixelmap/constants.py`, add entries to:
+   - `WIRING_FILE_MAP` - Positions and wiring CSVs for the probe type
    - `SUPPORTED_*_PRESETS` - Available presets (if applicable)
 
-3. **Update GUI**: In `gui/gui.py`, add the probe to the dropdown options
+   `pixelmap/utils/probe_features.py` builds `PROBE_FEATURES` and `PROBE_TYPE_MAP`
+   from `pixelmap/wiring_maps/Neuropixels_probe_features_Bill_Karsh.json`.
+   Update the source JSON and the taxonomy/part-number mappings in that module
+   as needed; do not edit the generated feature tables by hand.
+
+3. **Check GUI support**: The probe dropdown in `pixelmap/gui/gui.py` uses
+   `WIRING_FILE_MAP` automatically. Check probe-specific geometry and preset
+   handling there and in `pixelmap/backend.py` for the new type.
 
 4. **Add tests**: Create tests for the new probe type
 
