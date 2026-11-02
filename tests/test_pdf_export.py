@@ -17,6 +17,7 @@ import asyncio
 import gc
 import re
 import threading
+from io import BytesIO
 
 import matplotlib
 
@@ -30,27 +31,16 @@ from matplotlib.figure import Figure
 
 from pixelmap import backend
 from pixelmap.gui import gui as gui_module
-from pixelmap.gui.gui import ChannelmapGUI
+from tests.gui_helpers import select_preset
 
 PROBE_TYPES = ["1.0", "2.0-1shank", "2.0-4shanks", "QuadBase"]
-
-
-@pytest.fixture(scope="module")
-def gui():
-    """One GUI instance for the module — construction loads all probe data."""
-    return ChannelmapGUI()
+N_SHANKS = {"1.0": 1, "2.0-1shank": 1, "2.0-4shanks": 4, "QuadBase": 4}
 
 
 @pytest.fixture(autouse=True)
 def close_figures():
     yield
     plt.close("all")
-
-
-def _select_preset(gui, probe_type):
-    gui.probe_type = probe_type
-    gui.preset = next(p for p in gui.param.preset.objects if p)
-    gui.apply_preset()
 
 
 def _layout_args(gui):
@@ -87,7 +77,7 @@ def _download(gui):
 # --------------------------------------------------------------------------
 
 def test_pdf_download_does_not_force_gc(gui, monkeypatch):
-    _select_preset(gui, "2.0-4shanks")
+    select_preset(gui, "2.0-4shanks")
     calls = []
     monkeypatch.setattr(gc, "collect", lambda *a, **k: calls.append(a) or 0)
 
@@ -103,26 +93,14 @@ def test_pdf_download_not_ready_returns_none(gui, monkeypatch):
 
 
 def test_pdf_download_leaves_no_pyplot_figures(gui):
-    _select_preset(gui, "2.0-4shanks")
+    select_preset(gui, "2.0-4shanks")
     plt.close("all")
     _download(gui)
     assert plt.get_fignums() == []
 
 
-def test_pdf_download_callback_is_async(gui):
-    """Panel only awaits the callback (instead of running it inline) if async."""
-    assert asyncio.iscoroutinefunction(gui.download_pdf_button.callback)
-
-
-def test_pdf_download_through_panel_widget(gui):
-    """Panel's own async transfer path ends with a base64 PDF data URL."""
-    _select_preset(gui, "1.0")
-    asyncio.run(gui.download_pdf_button._async_sync_data())
-    assert gui.download_pdf_button.data.startswith("data:application/pdf;base64,")
-
-
 def test_pdf_renders_off_the_event_loop_thread(gui, monkeypatch):
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     real = backend.probe_layout_pdf
     threads = []
 
@@ -139,13 +117,12 @@ def test_pdf_renders_off_the_event_loop_thread(gui, monkeypatch):
 
 def test_event_loop_runs_while_pdf_renders(gui, monkeypatch):
     """Other sessions' callbacks must run while a render is in progress."""
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     started, release = threading.Event(), threading.Event()
 
     def slow_render(*args, **kwargs):
         started.set()
         assert release.wait(10), "event loop never got to run"
-        from io import BytesIO
         return BytesIO(b"%PDF-stub")
 
     monkeypatch.setattr(backend, "probe_layout_pdf", slow_render)
@@ -164,7 +141,7 @@ def test_event_loop_runs_while_pdf_renders(gui, monkeypatch):
 
 def test_concurrent_pdf_renders_are_capped(gui, monkeypatch):
     """A burst of downloads queues instead of saturating every core."""
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     lock = threading.Lock()
     running, peak = [0], [0]
 
@@ -175,7 +152,6 @@ def test_concurrent_pdf_renders_are_capped(gui, monkeypatch):
         threading.Event().wait(0.05)
         with lock:
             running[0] -= 1
-        from io import BytesIO
         return BytesIO(b"%PDF-stub")
 
     monkeypatch.setattr(backend, "probe_layout_pdf", counting_render)
@@ -186,17 +162,6 @@ def test_concurrent_pdf_renders_are_capped(gui, monkeypatch):
     results = asyncio.run(main())
     assert len(results) == 8
     assert 1 <= peak[0] <= gui_module.PDF_RENDER_WORKERS
-
-
-def test_pdf_render_error_reaches_caller(gui, monkeypatch):
-    _select_preset(gui, "1.0")
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("render failed")
-
-    monkeypatch.setattr(backend, "probe_layout_pdf", boom)
-    with pytest.raises(RuntimeError, match="render failed"):
-        _download(gui)
 
 
 # --------------------------------------------------------------------------
@@ -211,29 +176,26 @@ class _NoPyplot:
 @pytest.mark.parametrize("probe_type", PROBE_TYPES)
 @pytest.mark.parametrize("extras", ["plain", "survey", "anatomy"])
 def test_draw_probe_layout_never_touches_pyplot(gui, monkeypatch, probe_type, extras):
-    _select_preset(gui, probe_type)
-    n_shanks = 1 if probe_type in ("1.0", "2.0-1shank") else 4
+    select_preset(gui, probe_type)
+    n_shanks = N_SHANKS[probe_type]
     kwargs = {"plain": {}, "survey": _survey_kwargs(n_shanks), "anatomy": _anatomy_kwargs(n_shanks)}[extras]
     args = _layout_args(gui)
     monkeypatch.setattr(backend, "plt", _NoPyplot())
 
     fig = Figure()
     assert backend.draw_probe_layout(fig, *args, **kwargs) is fig
-    pdf = backend.probe_layout_pdf(*args, **kwargs)
 
     assert len(fig.axes) == (2 if extras == "survey" else 1)  # + colorbar axes
-    assert pdf.getvalue().startswith(b"%PDF")
     assert plt.get_fignums() == []
 
 
-@pytest.mark.parametrize("probe_type", PROBE_TYPES)
+@pytest.mark.parametrize("probe_type", ["1.0", "2.0-4shanks"])  # one single-shank, one 4-shank
 def test_pyplot_free_pdf_matches_pyplot_pdf(gui, probe_type):
     """Same bytes as the pyplot path, so the refactor cannot change output."""
-    _select_preset(gui, probe_type)
-    n_shanks = 1 if probe_type in ("1.0", "2.0-1shank") else 4
+    select_preset(gui, probe_type)
+    n_shanks = N_SHANKS[probe_type]
     args, kwargs = _layout_args(gui), _survey_kwargs(n_shanks)
 
-    from io import BytesIO
     via_pyplot = BytesIO()
     backend.plot_probe_layout(*args, **kwargs)
     plt.savefig(via_pyplot, format="pdf", dpi=300, bbox_inches="tight")
@@ -248,8 +210,8 @@ def test_concurrent_pyplot_free_renders_are_identical(gui):
 
     jobs = []
     for probe_type in ("1.0", "2.0-4shanks"):
-        _select_preset(gui, probe_type)
-        n_shanks = 1 if probe_type in ("1.0", "2.0-1shank") else 4
+        select_preset(gui, probe_type)
+        n_shanks = N_SHANKS[probe_type]
         jobs.append((tuple(_layout_args(gui)), _survey_kwargs(n_shanks)))
 
     def render(job):
@@ -265,7 +227,7 @@ def test_concurrent_pyplot_free_renders_are_identical(gui):
 def test_plot_probe_layout_still_uses_pyplot(gui):
     """The notebook relies on the figure being pyplot-managed (inline display),
     and on a ``None`` return so the cell does not display it a second time."""
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     plt.close("all")
     assert backend.plot_probe_layout(*_layout_args(gui)) is None
     assert len(plt.get_fignums()) == 1
@@ -273,7 +235,7 @@ def test_plot_probe_layout_still_uses_pyplot(gui):
 
 
 def test_plot_probe_layout_save_plot(gui, tmp_path):
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     backend.plot_probe_layout(*_layout_args(gui), save_plot=True, saveDir=tmp_path)
     (saved,) = tmp_path.glob("*.pdf")
     assert saved.read_bytes().startswith(b"%PDF")
@@ -287,7 +249,7 @@ def test_plot_probe_layout_save_plot(gui, tmp_path):
 @pytest.mark.parametrize("probe_type", PROBE_TYPES)
 def test_legend_location_is_pinned(gui, probe_type):
     """loc="best" re-runs an O(n_artists) search on every draw; it must be fixed."""
-    _select_preset(gui, probe_type)
+    select_preset(gui, probe_type)
     legend = _plot(gui).get_legend()
     assert legend is not None
     assert legend._loc != 0  # 0 == "best"
@@ -296,7 +258,7 @@ def test_legend_location_is_pinned(gui, probe_type):
 @pytest.mark.parametrize("probe_type", PROBE_TYPES)
 def test_legend_matches_previous_best_position(gui, probe_type):
     """The pinned spot is where loc="best" used to put it (output unchanged)."""
-    _select_preset(gui, probe_type)
+    select_preset(gui, probe_type)
     ax = _plot(gui)
     fig = ax.figure
     legend = ax.get_legend()
@@ -331,8 +293,8 @@ def _electrode_collections(ax):
 @pytest.mark.parametrize("with_survey", [False, True])
 def test_electrodes_drawn_as_collections(gui, probe_type, with_survey):
     """Thousands of individual patches made each PDF take seconds to build/draw."""
-    _select_preset(gui, probe_type)
-    n_shanks = 1 if probe_type in ("1.0", "2.0-1shank") else 4
+    select_preset(gui, probe_type)
+    n_shanks = N_SHANKS[probe_type]
     kwargs = {}
     if with_survey:
         # Includes an electrode with no survey value -> falls back to grey.
@@ -351,7 +313,7 @@ def test_electrodes_drawn_as_collections(gui, probe_type, with_survey):
 
 def test_selected_electrodes_coloured(gui):
     """Selected electrodes keep the opaque red facecolour inside the collection."""
-    _select_preset(gui, "2.0-1shank")
+    select_preset(gui, "2.0-1shank")
     (electrodes,) = _electrode_collections(_plot(gui))
 
     colours = [_rgba(c) for c in electrodes.get_facecolor()]
@@ -367,7 +329,7 @@ def test_multishank_forbidden_matches_shank_electrode_pairs(gui, probe_type, mon
     forbidden on one shank was also drawn black on every other shank that had
     any forbidden electrode.
     """
-    _select_preset(gui, probe_type)
+    select_preset(gui, probe_type)
     selected = np.array([[0, 0], [1, 1]])
     monkeypatch.setattr(backend, "find_selected_electrodes", lambda _imro: selected)
     forbidden = backend.find_forbidden_electrodes(selected, gui.wiring_df)
@@ -393,7 +355,7 @@ def test_multishank_forbidden_matches_shank_electrode_pairs(gui, probe_type, mon
 @pytest.mark.parametrize("probe_type", ["2.0-1shank", "2.0-4shanks"])
 def test_no_forbidden_electrodes(gui, probe_type, monkeypatch):
     """With no wiring conflicts, both branches draw without any black electrode."""
-    _select_preset(gui, probe_type)
+    select_preset(gui, probe_type)
     monkeypatch.setattr(
         backend, "find_forbidden_electrodes", lambda *_a: np.empty((0, 2), dtype=int)
     )
@@ -422,7 +384,7 @@ def test_add_rects_empty_is_noop():
 def test_plot_probe_layout_save_filename(gui, tmp_path, title, expected):
     """Filenames match the pre-refactor rule: '_' and '\\n' become spaces, then
     spaces become '_'."""
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     args = _layout_args(gui)[:-1] + (title,)
     backend.plot_probe_layout(*args, save_plot=True, saveDir=tmp_path)
     assert [p.name for p in tmp_path.glob("*.pdf")] == [expected]

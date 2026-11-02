@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from pixelmap.constants import WIRING_FILE_MAP
+from pixelmap.gui.gui import ChannelmapGUI
 
 
 @pytest.fixture
@@ -62,3 +63,9 @@ def sample_electrodes_4shanks():
 def tmp_imro_file(tmp_path):
     """Provide temporary file path for IMRO file testing."""
     return tmp_path / "test_channelmap.imro"
+
+
+@pytest.fixture(scope="module")
+def gui():
+    """One GUI instance per module -- construction loads all probe data."""
+    return ChannelmapGUI()

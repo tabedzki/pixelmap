@@ -10,29 +10,31 @@ worker, so other sessions are not held up.
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import json
 import threading
 
 import pytest
 
-from pixelmap.gui.gui import ChannelmapGUI
+from pixelmap import backend
 from pixelmap.types import Electrode
 from pixelmap.utils import imro as imro_module
+from tests.gui_helpers import select_preset
 
 PROBE_TYPES = ["1.0", "2.0-1shank", "2.0-4shanks", "QuadBase"]
 DOWNLOADS = ["generate_imro_content", "generate_pdf_content", "generate_kilosort_channelmap"]
 
 
-@pytest.fixture(scope="module")
-def gui():
-    return ChannelmapGUI()
-
-
-def _select_preset(gui, probe_type):
-    gui.probe_type = probe_type
-    gui.preset = next(p for p in gui.param.preset.objects if p)
-    gui.apply_preset()
+# (button, patch target module, patched function, download callback)
+ERROR_TARGETS = [
+    pytest.param("download_imro_button", imro_module, "generate_imro_channelmap",
+                 "generate_imro_content", id="imro"),
+    pytest.param("download_pdf_button", backend, "probe_layout_pdf",
+                 "generate_pdf_content", id="pdf"),
+    pytest.param("download_kilosort_button", backend, "generate_kilosort_channelmap_dict",
+                 "generate_kilosort_channelmap", id="kilosort"),
+]
 
 
 def _run(coro):
@@ -45,7 +47,7 @@ def _run(coro):
 
 @pytest.mark.parametrize("probe_type", PROBE_TYPES)
 def test_async_imro_matches_sync(gui, probe_type):
-    _select_preset(gui, probe_type)
+    select_preset(gui, probe_type)
     gui.generate_imro()
     expected = list(gui.imro_list)
     gui.imro_list = None
@@ -57,7 +59,7 @@ def test_async_imro_matches_sync(gui, probe_type):
 
 @pytest.mark.parametrize("legacy", [False, True])
 def test_async_imro_respects_legacy_header(gui, legacy):
-    _select_preset(gui, "2.0-4shanks")
+    select_preset(gui, "2.0-4shanks")
     gui.legacy_imro_mode = legacy
     try:
         gui.generate_imro()
@@ -69,7 +71,7 @@ def test_async_imro_respects_legacy_header(gui, legacy):
 
 
 def test_imro_download_content(gui):
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     gui.generate_imro()
     header, *entries = gui.imro_list
     expected = f"({header[0]},{header[1]})" + "".join(
@@ -81,7 +83,7 @@ def test_imro_download_content(gui):
 
 
 def test_kilosort_download_content(gui):
-    _select_preset(gui, "2.0-4shanks")
+    select_preset(gui, "2.0-4shanks")
     data = json.loads(_run(gui.generate_kilosort_channelmap()).getvalue())
     assert data["n_chan"] == 384
     assert len(data["chanMap"]) == len(data["xc"]) == len(data["yc"]) == len(data["kcoords"]) == 384
@@ -109,9 +111,7 @@ def test_download_callbacks_are_async(gui, name):
 )
 def test_downloads_through_panel_widget(gui, button, prefix):
     """Panel's own async transfer path delivers each file as a data URL."""
-    import base64
-
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     widget = getattr(gui, button)
     widget.data = None
     _run(widget._async_sync_data())
@@ -125,7 +125,7 @@ def test_downloads_through_panel_widget(gui, button, prefix):
 # --------------------------------------------------------------------------
 
 def test_imro_computed_off_the_event_loop_thread(gui, monkeypatch):
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     real = imro_module.generate_imro_channelmap
     threads = []
 
@@ -139,7 +139,7 @@ def test_imro_computed_off_the_event_loop_thread(gui, monkeypatch):
 
 
 def test_event_loop_runs_while_imro_computes(gui, monkeypatch):
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     real = imro_module.generate_imro_channelmap
     started, release = threading.Event(), threading.Event()
 
@@ -164,7 +164,7 @@ def test_event_loop_runs_while_imro_computes(gui, monkeypatch):
 def test_selection_change_during_compute_uses_snapshot(gui, monkeypatch):
     """Inputs are copied on the loop; editing the selection mid-compute must
     neither crash the worker ("set changed size") nor leak into the result."""
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     gui.generate_imro()
     expected = list(gui.imro_list)
     real = imro_module.generate_imro_channelmap
@@ -190,42 +190,36 @@ def test_selection_change_during_compute_uses_snapshot(gui, monkeypatch):
     assert gui.imro_list == expected
 
 
-def test_imro_error_reaches_caller(gui, monkeypatch):
-    _select_preset(gui, "1.0")
+@pytest.mark.parametrize("button, module, attr, callback", ERROR_TARGETS)
+def test_worker_error_reaches_caller(gui, monkeypatch, button, module, attr, callback):
+    select_preset(gui, "1.0")
 
     def boom(*args, **kwargs):
-        raise RuntimeError("imro failed")
+        raise RuntimeError("worker failed")
 
-    monkeypatch.setattr(imro_module, "generate_imro_channelmap", boom)
-    with pytest.raises(RuntimeError, match="imro failed"):
-        _run(gui.generate_imro_content())
+    monkeypatch.setattr(module, attr, boom)
+    with pytest.raises(RuntimeError, match="worker failed"):
+        _run(getattr(gui, callback)())
 
 
 def test_sync_generate_imro_still_works(gui):
     """Other callers (and tests) use the synchronous method."""
-    _select_preset(gui, "2.0-1shank")
+    select_preset(gui, "2.0-1shank")
     gui.imro_list = None
     gui.generate_imro()
     assert gui.imro_list[0][1] == len(gui.imro_list) - 1
 
 
 def test_inputs_snapshot_is_independent(gui):
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     inputs = gui._imro_inputs()
     before = list(inputs["selected"])
     gui.electrodes.clear_selection()
     assert inputs["selected"] == before
 
 
-@pytest.mark.parametrize(
-    "button, target",
-    [
-        ("download_imro_button", "imro"),
-        ("download_pdf_button", "pdf"),
-        ("download_kilosort_button", "kilosort"),
-    ],
-)
-def test_executor_download_errors_reach_session_handler(gui, monkeypatch, button, target):
+@pytest.mark.parametrize("button, module, attr, callback", ERROR_TARGETS)
+def test_executor_download_errors_reach_session_handler(gui, monkeypatch, button, module, attr, callback):
     """Exercise FileDownload's scheduled server callback, including #75's handler.
 
     Raw Bokeh callbacks use the synchronous `guarded` decorator; downloads use
@@ -239,13 +233,13 @@ def test_executor_download_errors_reach_session_handler(gui, monkeypatch, button
     from bokeh.document import Document
     from panel.io.state import set_curdoc
 
-    from pixelmap import backend, error_reporting
+    from pixelmap import error_reporting
 
-    _select_preset(gui, "1.0")
+    select_preset(gui, "1.0")
     doc = Document()
     session = Mock()
     doc._session_context = weakref.ref(session)
-    failure = RuntimeError(f"{target} worker failed")
+    failure = RuntimeError(f"{attr} worker failed")
     worker_threads = []
     reports = []
 
@@ -253,12 +247,7 @@ def test_executor_download_errors_reach_session_handler(gui, monkeypatch, button
         worker_threads.append(threading.current_thread())
         raise failure
 
-    if target == "imro":
-        monkeypatch.setattr(imro_module, "generate_imro_channelmap", boom)
-    elif target == "pdf":
-        monkeypatch.setattr(backend, "probe_layout_pdf", boom)
-    else:
-        monkeypatch.setattr(backend, "generate_kilosort_channelmap_dict", boom)
+    monkeypatch.setattr(module, attr, boom)
     monkeypatch.setattr(
         error_reporting, "report_error",
         lambda exc, context: reports.append((exc, context, pn.state.curdoc)),

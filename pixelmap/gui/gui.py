@@ -239,6 +239,13 @@ _pdf_executor = ThreadPoolExecutor(
 )
 
 
+async def _off_loop(fn, *args, executor=None):
+    """Run ``fn(*args)`` on a worker thread; the default pool unless ``executor`` is given."""
+    if executor is None:
+        return await asyncio.to_thread(fn, *args)
+    return await asyncio.get_running_loop().run_in_executor(executor, fn, *args)
+
+
 def _compute_imro(inputs: dict) -> list:
     """Build the IMRO list from :meth:`ChannelmapGUI._imro_inputs`.
 
@@ -984,17 +991,27 @@ class ChannelmapGUI(param.Parameterized):
         self.imro_list = _compute_imro(self._imro_inputs())
 
     @pn.io.with_lock  # only called from locked callbacks; marked for test_no_unlocked_async_gui_callbacks
-    async def _generate_imro_async(self):
+    async def _generate_imro_async(self) -> list:
         """:meth:`generate_imro`, with the computation on a worker thread.
 
         Inputs are snapshotted here on the event loop -- the selection is a
         live set the loop may edit mid-compute -- and the result is assigned
-        back here too, so the worker never touches session state.
+        back here too, so the worker never touches session state.  Returns the
+        list it assigns to ``self.imro_list``.
         """
-        inputs = self._imro_inputs()
-        self.imro_list = await asyncio.get_running_loop().run_in_executor(
-            None, _compute_imro, inputs
-        )
+        self.imro_list = await _off_loop(_compute_imro, self._imro_inputs())
+        return self.imro_list
+
+    @pn.io.with_lock  # see _generate_imro_async
+    async def _prepare_download(self):
+        """Shared prefix of the download callbacks.
+
+        Returns the IMRO list, or ``None`` when the selection isn't complete.
+        """
+        if not self.ready_to_download():
+            return None
+        self.update_filename()
+        return await self._generate_imro_async()
 
     def _imro_inputs(self) -> dict:
         """Everything IMRO generation reads from the session, copied."""
@@ -1012,19 +1029,16 @@ class ChannelmapGUI(param.Parameterized):
 
     @pn.io.with_lock  # see _on_compute_anatomy_click; per-session, held across the await
     async def generate_imro_content(self):
-        if not self.ready_to_download():
+        imro_list = await self._prepare_download()
+        if imro_list is None:
             return
-
-        # Update filename and generate IMRO list
-        self.update_filename()
-        await self._generate_imro_async()
 
         # Convert list to string
         content_lines = []
-        header = self.imro_list[0]
+        header = imro_list[0]
         content_lines.append(f"({header[0]},{header[1]})")
 
-        for entry in self.imro_list[1:]:
+        for entry in imro_list[1:]:
             entry_str = " ".join(str(x) for x in entry)
             content_lines.append(f"({entry_str})")
 
@@ -1033,12 +1047,9 @@ class ChannelmapGUI(param.Parameterized):
 
     @pn.io.with_lock  # see _on_compute_anatomy_click; per-session, held across the await
     async def generate_pdf_content(self):
-        if not self.ready_to_download():
+        imro_list = await self._prepare_download()
+        if imro_list is None:
             return
-
-        # Update filename and generate IMRO list
-        self.update_filename()
-        await self._generate_imro_async()
 
         # Collect anatomy overlay data (if active)
         anatomy_bands = None
@@ -1077,32 +1088,30 @@ class ChannelmapGUI(param.Parameterized):
         #
         # No gc.collect() afterwards: a full collection walks every live object
         # in the process and froze every session for seconds per download.
-        render = functools.partial(
-            backend.probe_layout_pdf,
-            self.probe_type,
-            list(self.imro_list),
-            self.positions_file,
-            self.wiring_file,
-            self.filename_input.value,
-            figsize=(2, 30),
-            anatomy_bands=anatomy_bands,
-            survey_colors=survey_colors,
-            survey_range=survey_range,
+        return await _off_loop(
+            lambda: backend.probe_layout_pdf(
+                self.probe_type,
+                imro_list,
+                self.positions_file,
+                self.wiring_file,
+                self.filename_input.value,
+                figsize=(2, 30),
+                anatomy_bands=anatomy_bands,
+                survey_colors=survey_colors,
+                survey_range=survey_range,
+            ),
+            executor=_pdf_executor,
         )
-        return await asyncio.get_running_loop().run_in_executor(_pdf_executor, render)
 
     @pn.io.with_lock  # see _on_compute_anatomy_click; per-session, held across the await
     async def generate_kilosort_channelmap(self):
-        if not self.ready_to_download():
+        imro_list = await self._prepare_download()
+        if imro_list is None:
             return
 
-        # Update filename and generate IMRO list
-        self.update_filename()
-        await self._generate_imro_async()
-
         # Generate Kilosort channelmap dictionary (reads a CSV: off the loop too)
-        kilosort_dict = await asyncio.get_running_loop().run_in_executor(
-            None, backend.generate_kilosort_channelmap_dict, list(self.imro_list), self.positions_file
+        kilosort_dict = await _off_loop(
+            backend.generate_kilosort_channelmap_dict, imro_list, self.positions_file
         )
 
         # Convert numpy arrays to lists for JSON serialization

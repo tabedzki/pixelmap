@@ -728,7 +728,7 @@ def plot_probe_layout(
     if save_plot:
         if saveDir is None:
             saveDir = Path.cwd()
-        pdf_filename = "_".join(title.replace("_", " ").replace("\n", " ").split(" ")) + ".pdf"
+        pdf_filename = "_".join(title.replace("\n", " ").split(" ")) + ".pdf"
         fig.savefig(Path(saveDir) / pdf_filename, dpi=300, bbox_inches="tight")
         print(f"Saved plot: {pdf_filename}")
 
