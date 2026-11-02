@@ -69,3 +69,11 @@ def tmp_imro_file(tmp_path):
 def gui():
     """One GUI instance per module -- construction loads all probe data."""
     return ChannelmapGUI()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_imro_memo(request):
+    """Start each test using the module-scoped GUI without its IMRO memo:
+    many tests patch the IMRO computation and expect it to run."""
+    if "gui" in request.fixturenames:
+        request.getfixturevalue("gui")._imro_memo = None

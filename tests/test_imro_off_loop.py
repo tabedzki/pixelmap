@@ -51,6 +51,7 @@ def test_async_imro_matches_sync(gui, probe_type):
     gui.generate_imro()
     expected = list(gui.imro_list)
     gui.imro_list = None
+    gui._imro_memo = None  # compare a real async compute, not the memo
 
     _run(gui._generate_imro_async())
 
@@ -64,6 +65,7 @@ def test_async_imro_respects_legacy_header(gui, legacy):
     try:
         gui.generate_imro()
         expected = list(gui.imro_list)
+        gui._imro_memo = None  # compare a real async compute, not the memo
         _run(gui._generate_imro_async())
         assert gui.imro_list == expected
     finally:
@@ -167,6 +169,7 @@ def test_selection_change_during_compute_uses_snapshot(gui, monkeypatch):
     select_preset(gui, "1.0")
     gui.generate_imro()
     expected = list(gui.imro_list)
+    gui._imro_memo = None  # make the async call compute, not reuse this result
     real = imro_module.generate_imro_channelmap
     started, release = threading.Event(), threading.Event()
 
@@ -213,7 +216,7 @@ def test_sync_generate_imro_still_works(gui):
 def test_inputs_snapshot_is_independent(gui):
     select_preset(gui, "1.0")
     inputs = gui._imro_inputs()
-    before = list(inputs["selected"])
+    before = tuple(inputs["selected"])
     gui.electrodes.clear_selection()
     assert inputs["selected"] == before
 

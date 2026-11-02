@@ -4,10 +4,9 @@
 
 
 import numpy as np
-import pandas as pd
 import panel as pn
 
-from pixelmap.backend import format_imro_string, get_electrodes
+from pixelmap.backend import _read_probe_csv, format_imro_string, get_electrodes
 from pixelmap.constants import (
     LEGACY_INT_TO_IMRO_FORMAT,
     LEGACY_PROBE_TYPE_MAP,
@@ -245,7 +244,7 @@ def generate_imro_channelmap(
     if probe_subtype is None:
         probe_subtype = PROBE_TYPE_MAP[probe_type][0]
 
-    wiring_df = pd.read_csv(wiring_file)
+    wiring_df = _read_probe_csv(wiring_file)
 
     # 2) Select electrodes from presets or custom
     selected_electrodes = get_electrodes(probe_type, wiring_df, layout_preset, custom_electrodes, probe_subtype=probe_subtype)

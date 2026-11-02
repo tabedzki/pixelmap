@@ -2,8 +2,9 @@
 ## Imports ##
 #############
 
+import os
 import pickle
-from functools import cache
+from functools import cache, lru_cache
 from io import BytesIO
 from pathlib import Path
 from types import MappingProxyType
@@ -188,6 +189,33 @@ def _freeze_wiring_maps(wiring_maps):
         })
         for probe_type, conflicts in wiring_maps.items()
     })
+
+
+def _read_probe_csv(path):
+    """``pd.read_csv(path)``, parsed once per file per process.
+
+    The probe wiring and positions CSVs are static package data, yet every
+    download used to re-parse them -- up to five reads per IMRO/PDF/Kilosort
+    round.  Paths are cached by resolved location plus modification time and
+    size, so any spelling of a path shares one entry and a rewritten file is
+    read again.  Each call returns its own deep copy (~0.1 ms, against ~1 ms
+    to parse), so no caller can corrupt the frame every session shares.
+    Anything that isn't a path (an open buffer) is read directly, uncached.
+
+    Complements :func:`make_wiring_maps`' cache, which holds the derived
+    conflict sets rather than the tables themselves.
+    """
+    if not isinstance(path, (str, os.PathLike)):
+        return pd.read_csv(path)
+    resolved = Path(path).resolve()
+    stat = resolved.stat()  # FileNotFoundError for a missing file, as before
+    return _read_csv_cached(str(resolved), stat.st_mtime_ns, stat.st_size).copy()
+
+
+@lru_cache(maxsize=32)  # a handful of probe CSVs; bounded in case files keep changing
+def _read_csv_cached(resolved_path, mtime_ns, size):
+    "The shared frame behind :func:`_read_probe_csv`; never hand it out uncopied."
+    return pd.read_csv(resolved_path)
 
 
 def format_wiring_df(wiring_df):
@@ -648,7 +676,7 @@ def generate_kilosort_channelmap_dict(imro_list, positions_file):
     selected_electrodes = find_selected_electrodes(imro_list)
 
     # Load position data
-    positions_df = pd.read_csv(positions_file)
+    positions_df = _read_probe_csv(positions_file)
 
     # Create mapping from (shank_id, electrode_id) to position
     n_selected = len(selected_electrodes)
@@ -782,11 +810,11 @@ def draw_probe_layout(
     selected_electrodes = find_selected_electrodes(imro_list)
 
     # Define forbidden electrodes from wiring map
-    wiring_df = pd.read_csv(wiring_file)
+    wiring_df = _read_probe_csv(wiring_file)
     forbidden_electrodes = find_forbidden_electrodes(selected_electrodes, wiring_df)
 
     # Load positions
-    positions_df = pd.read_csv(positions_file)
+    positions_df = _read_probe_csv(positions_file)
     positions = positions_df.values
 
     # Single shank

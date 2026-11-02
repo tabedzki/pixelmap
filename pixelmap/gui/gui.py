@@ -18,7 +18,6 @@ from io import BytesIO, StringIO
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import panel as pn
 import param
 from bokeh import events
@@ -271,6 +270,15 @@ def _compute_imro(inputs: dict) -> list:
     return imro_list
 
 
+def _imro_key(inputs: dict) -> tuple:
+    """Hashable memo key for :func:`_compute_imro`: every input, with its type.
+
+    The type matters because ``500 == 500.0`` (and ``1 == True``) compare and
+    hash alike, yet a 1.0 IMRO writes the gain out as ``500`` or ``500.0``.
+    """
+    return tuple((name, type(value), value) for name, value in sorted(inputs.items()))
+
+
 class ChannelmapGUI(param.Parameterized):
     """Main GUI class for interactive channelmap generation using Bokeh"""
 
@@ -340,6 +348,11 @@ class ChannelmapGUI(param.Parameterized):
         self.ap_gain_default = 500
         self.lf_gain_default = 250
 
+        # Last IMRO computed for this session, as (_imro_key, tuple of entries):
+        # downloading the IMRO, then the PDF, then the Kilosort map computes it
+        # once.  One entry, per session; any change to the inputs misses.
+        self._imro_memo: tuple | None = None
+
         # Survey overlay state
         self.survey_values: dict[Electrode, float] | None = None
         self.survey_cmap = LinearColorMapper(palette=Viridis256, low=0.0, high=1.0)
@@ -398,8 +411,8 @@ class ChannelmapGUI(param.Parameterized):
         self.probe_subtype = self.param.probe_subtype.objects[0]
 
         # Load data
-        self.positions_df = pd.read_csv(self.positions_file)
-        self.wiring_df = pd.read_csv(self.wiring_file)
+        self.positions_df = backend._read_probe_csv(self.positions_file)
+        self.wiring_df = backend._read_probe_csv(self.wiring_file)
 
         # Initialize electrodes
         self.electrodes = Electrodes(self.wiring_maps[self.probe_type], PROBE_FEATURES[self.probe_subtype]["n_readouts_total"])
@@ -988,7 +1001,12 @@ class ChannelmapGUI(param.Parameterized):
 
     def generate_imro(self):
         """Generate IMRO file from current selection"""
-        self.imro_list = _compute_imro(self._imro_inputs())
+        inputs = self._imro_inputs()
+        key = _imro_key(inputs)
+        imro_list = self._memoised_imro(key)
+        if imro_list is None:
+            imro_list = self._memoise_imro(key, _compute_imro(inputs))
+        self.imro_list = imro_list
 
     @pn.io.with_lock  # only called from locked callbacks; marked for test_no_unlocked_async_gui_callbacks
     async def _generate_imro_async(self) -> list:
@@ -997,10 +1015,31 @@ class ChannelmapGUI(param.Parameterized):
         Inputs are snapshotted here on the event loop -- the selection is a
         live set the loop may edit mid-compute -- and the result is assigned
         back here too, so the worker never touches session state.  Returns the
-        list it assigns to ``self.imro_list``.
+        list it assigns to ``self.imro_list``.  Unchanged inputs reuse the
+        session's last result without computing.
         """
-        self.imro_list = await _off_loop(_compute_imro, self._imro_inputs())
-        return self.imro_list
+        inputs = self._imro_inputs()
+        key = _imro_key(inputs)
+        imro_list = self._memoised_imro(key)
+        if imro_list is None:
+            imro_list = self._memoise_imro(key, await _off_loop(_compute_imro, inputs))
+        self.imro_list = imro_list
+        return imro_list
+
+    def _memoised_imro(self, key: tuple) -> list | None:
+        """A fresh list of the memoised IMRO for ``key``, or ``None`` on a miss."""
+        if self._imro_memo is not None and self._imro_memo[0] == key:
+            return list(self._imro_memo[1])
+        return None
+
+    def _memoise_imro(self, key: tuple, imro_list: list) -> list:
+        """Remember ``imro_list`` as the result for ``key``; returns it.
+
+        The memo keeps its own tuple of tuples, so callers that mutate the
+        list they were given cannot change what later downloads get.
+        """
+        self._imro_memo = (key, tuple(tuple(entry) for entry in imro_list))
+        return imro_list
 
     @pn.io.with_lock  # see _generate_imro_async
     async def _prepare_download(self):
@@ -1014,9 +1053,14 @@ class ChannelmapGUI(param.Parameterized):
         return await self._generate_imro_async()
 
     def _imro_inputs(self) -> dict:
-        """Everything IMRO generation reads from the session, copied."""
+        """Everything IMRO generation reads from the session, copied.
+
+        All values are hashable, for :func:`_imro_key`.  The selection is
+        sorted: the IMRO is ordered by (unique) channel whatever order the
+        electrodes come in, so this only makes equal selections compare equal.
+        """
         return {
-            "selected": [(e.shank_id, e.electrode_id) for e in self.electrodes.selected],
+            "selected": tuple(sorted((e.shank_id, e.electrode_id) for e in self.electrodes.selected)),
             "probe_type": self.probe_type,
             "wiring_file": self.wiring_file,
             "reference_id": self.reference_id,
