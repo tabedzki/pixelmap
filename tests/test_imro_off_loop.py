@@ -215,3 +215,67 @@ def test_inputs_snapshot_is_independent(gui):
     before = list(inputs["selected"])
     gui.electrodes.clear_selection()
     assert inputs["selected"] == before
+
+
+@pytest.mark.parametrize(
+    "button, target",
+    [
+        ("download_imro_button", "imro"),
+        ("download_pdf_button", "pdf"),
+        ("download_kilosort_button", "kilosort"),
+    ],
+)
+def test_executor_download_errors_reach_session_handler(gui, monkeypatch, button, target):
+    """Exercise FileDownload's scheduled server callback, including #75's handler.
+
+    Raw Bokeh callbacks use the synchronous `guarded` decorator; downloads use
+    Panel's async exception routing instead. Awaiting the executor future must
+    preserve the exception and report it in the originating document context.
+    """
+    import weakref
+    from unittest.mock import Mock
+
+    import panel as pn
+    from bokeh.document import Document
+    from panel.io.state import set_curdoc
+
+    from pixelmap import backend, error_reporting
+
+    _select_preset(gui, "1.0")
+    doc = Document()
+    session = Mock()
+    doc._session_context = weakref.ref(session)
+    failure = RuntimeError(f"{target} worker failed")
+    worker_threads = []
+    reports = []
+
+    def boom(*args, **kwargs):
+        worker_threads.append(threading.current_thread())
+        raise failure
+
+    if target == "imro":
+        monkeypatch.setattr(imro_module, "generate_imro_channelmap", boom)
+    elif target == "pdf":
+        monkeypatch.setattr(backend, "probe_layout_pdf", boom)
+    else:
+        monkeypatch.setattr(backend, "generate_kilosort_channelmap_dict", boom)
+    monkeypatch.setattr(
+        error_reporting, "report_error",
+        lambda exc, context: reports.append((exc, context, pn.state.curdoc)),
+    )
+    widget = getattr(gui, button)
+    widget.data = None
+
+    async def click():
+        with set_curdoc(doc), pn.config.set(
+            exception_handler=error_reporting.session_exception_handler
+        ):
+            widget._transfer()
+            callback, = doc.session_callbacks
+            await callback.callback()
+
+    _run(click())
+
+    assert worker_threads and worker_threads[0] is not threading.current_thread()
+    assert reports == [(failure, "GUI callback", doc)]
+    assert widget.data is None
