@@ -288,6 +288,14 @@ class ErrorReporter:
                 message += " (the error has been reported)"
             _toast(message)
 
+        self.forward_exception(exc, context, config=config)
+
+    def forward_exception(
+        self, exc: BaseException, context: str | None = None, *, config: WebhookConfig | None = None
+    ) -> None:
+        """Deliver through the shared dedupe/queue without logging or toasting."""
+        if config is None:
+            config = self._config_loader()
         if config.enabled and self._should_send(exc, config):
             self._dispatch(build_payload(exc, context, _current_session_id()), config)
 
@@ -335,6 +343,23 @@ class ErrorReporter:
 
 
 _REPORTER = ErrorReporter()
+
+
+class ExceptionWebhookHandler(logging.Handler):
+    """Forward exception records only; reporter diagnostics must never recurse."""
+
+    def __init__(self):
+        super().__init__(level=logging.ERROR)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.name == "pixelmap.errors" or record.name.startswith("pixelmap.errors."):
+            return
+        if not record.exc_info or record.exc_info[1] is None:
+            return
+        try:
+            _REPORTER.forward_exception(record.exc_info[1], context=record.getMessage())
+        except Exception:
+            logger.warning("Could not forward exception log to webhook", exc_info=True)
 
 
 def report_error(
