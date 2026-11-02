@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import inspect
 import re
 import threading
 from io import BytesIO
@@ -388,3 +389,83 @@ def test_plot_probe_layout_save_filename(gui, tmp_path, title, expected):
     args = _layout_args(gui)[:-1] + (title,)
     backend.plot_probe_layout(*args, save_plot=True, saveDir=tmp_path)
     assert [p.name for p in tmp_path.glob("*.pdf")] == [expected]
+
+
+# --------------------------------------------------------------------------
+# The wrappers forward drawing options to draw_probe_layout
+# --------------------------------------------------------------------------
+
+LEADING = ["probe_type", "imro_list", "positions_file", "wiring_file", "title"]
+#: The real signature, taken before any test swaps the function out.
+DRAW_PARAMS = inspect.signature(backend.draw_probe_layout).parameters
+
+
+def _drawing_options():
+    """draw_probe_layout's keyword options (everything after fig + LEADING)."""
+    params = list(DRAW_PARAMS)
+    assert params[:6] == ["fig", *LEADING]
+    return params[6:]
+
+
+@pytest.fixture
+def recorded_draw(monkeypatch):
+    """Replace draw_probe_layout with a recorder that also takes an option
+    the wrappers have never heard of, standing in for future options."""
+    calls = []
+
+    def draw(fig, probe_type, imro_list, positions_file, wiring_file, title, *,
+             brand_new_option=None, **options):
+        calls.append(((probe_type, imro_list, positions_file, wiring_file, title),
+                      dict(options, brand_new_option=brand_new_option)))
+        fig.add_subplot()
+        return fig
+
+    monkeypatch.setattr(backend, "draw_probe_layout", draw)
+    return calls
+
+
+@pytest.mark.parametrize("wrapper", ["plot_probe_layout", "probe_layout_pdf"])
+def test_wrappers_forward_every_drawing_option(recorded_draw, wrapper):
+    options = {name: object() for name in _drawing_options()}
+    options["brand_new_option"] = object()
+    leading = tuple(object() for _ in LEADING)
+
+    getattr(backend, wrapper)(*leading, **options)
+
+    ((got_leading, got_options),) = recorded_draw
+    assert got_leading == leading
+    assert got_options == options
+
+
+@pytest.mark.parametrize("wrapper", ["plot_probe_layout", "probe_layout_pdf"])
+def test_wrappers_default_to_draw_probe_layouts_defaults(recorded_draw, wrapper):
+    """Options left out are left to draw_probe_layout (figsize, which
+    plot_probe_layout keeps as a positional, passes its matching default)."""
+    getattr(backend, wrapper)(*LEADING)
+    ((_, got_options),) = recorded_draw
+    got_options.pop("brand_new_option")
+    assert got_options == {name: DRAW_PARAMS[name].default for name in got_options}
+
+
+def test_plot_probe_layout_keeps_its_positional_order():
+    """Existing positional calls -- (..., title, figsize, save_plot, saveDir) --
+    must still bind as before."""
+    params = list(inspect.signature(backend.plot_probe_layout).parameters.values())
+    assert [p.name for p in params[:8]] == [*LEADING, "figsize", "save_plot", "saveDir"]
+    assert all(p.kind is p.POSITIONAL_OR_KEYWORD for p in params[:8])
+    assert params[5].default == DRAW_PARAMS["figsize"].default
+    assert params[6].default is False and params[7].default is None
+    assert params[-1].kind is params[-1].VAR_KEYWORD
+
+
+def test_plot_probe_layout_positional_save_args(gui, tmp_path, recorded_draw):
+    select_preset(gui, "1.0")
+    backend.plot_probe_layout(*_layout_args(gui), (3, 10), True, tmp_path)
+    ((_, got_options),) = recorded_draw
+    assert got_options["figsize"] == (3, 10)
+    assert [p.name for p in tmp_path.glob("*.pdf")] == ["t.pdf"]
+
+
+@pytest.mark.parametrize("wrapper", ["plot_probe_layout", "probe_layout_pdf"])
+def test_wrapper_docstrings_point_to_draw_probe_layout(wrapper):
+    assert ":func:`draw_probe_layout`" in getattr(backend, wrapper).__doc__

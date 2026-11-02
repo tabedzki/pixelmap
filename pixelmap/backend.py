@@ -733,12 +733,19 @@ def _add_rects(ax, rects, facecolors, zorder=1):
 
 def plot_probe_layout(
     probe_type, imro_list, positions_file, wiring_file, title, figsize=(2, 30), save_plot=False, saveDir=None,
-    anatomy_bands=None, survey_colors=None, survey_range=None
+    **draw_kwargs,
 ):
     """
     Create visualization of probe layout with selected electrodes
 
     figsize: (width, height) per shank in inch
+    save_plot: also save the figure as ``<title>.pdf`` (spaces and newlines
+        become underscores) at 300 dpi
+    saveDir: directory to save into; defaults to the current directory
+
+    Other keyword arguments (``anatomy_bands``, ``survey_colors``,
+    ``survey_range``, ...) are drawing options, passed on to
+    :func:`draw_probe_layout`; see it for their meaning.
 
     The figure is created through pyplot, so it displays inline in notebooks
     and with ``plt.show()`` (``plt.gcf()`` to get it).  Returns ``None`` on
@@ -749,8 +756,7 @@ def plot_probe_layout(
     """
     fig = plt.figure()
     draw_probe_layout(
-        fig, probe_type, imro_list, positions_file, wiring_file, title, figsize=figsize,
-        anatomy_bands=anatomy_bands, survey_colors=survey_colors, survey_range=survey_range,
+        fig, probe_type, imro_list, positions_file, wiring_file, title, figsize=figsize, **draw_kwargs
     )
 
     if save_plot:
@@ -761,11 +767,11 @@ def plot_probe_layout(
         print(f"Saved plot: {pdf_filename}")
 
 
-def probe_layout_pdf(
-    probe_type, imro_list, positions_file, wiring_file, title, figsize=(2, 30),
-    anatomy_bands=None, survey_colors=None, survey_range=None
-) -> BytesIO:
+def probe_layout_pdf(probe_type, imro_list, positions_file, wiring_file, title, **draw_kwargs) -> BytesIO:
     """Render the probe layout to an in-memory PDF, without pyplot.
+
+    Keyword arguments (``figsize``, ``anatomy_bands``, ...) are drawing
+    options, passed on to :func:`draw_probe_layout`; see it for their meaning.
 
     Uses a standalone :class:`~matplotlib.figure.Figure`, so it is safe to call
     from worker threads: nothing is registered in pyplot's global figure list,
@@ -773,10 +779,7 @@ def probe_layout_pdf(
     :func:`plot_probe_layout`'s figure at 300 dpi with a tight bounding box.
     """
     fig = Figure()
-    draw_probe_layout(
-        fig, probe_type, imro_list, positions_file, wiring_file, title, figsize=figsize,
-        anatomy_bands=anatomy_bands, survey_colors=survey_colors, survey_range=survey_range,
-    )
+    draw_probe_layout(fig, probe_type, imro_list, positions_file, wiring_file, title, **draw_kwargs)
     buffer = BytesIO()
     fig.savefig(buffer, format="pdf", dpi=300, bbox_inches="tight")
     buffer.seek(0)
@@ -789,10 +792,22 @@ def draw_probe_layout(
 ):
     """Draw the probe layout into ``fig``, an empty figure; returns ``fig``.
 
-    Resizes ``fig`` to fit the probe (``figsize`` is per shank, in inches).
     Only touches ``fig`` itself -- never pyplot -- so callers choose whether
     the figure is pyplot-managed (:func:`plot_probe_layout`) or standalone
-    (:func:`probe_layout_pdf`).
+    (:func:`probe_layout_pdf`).  Both pass their drawing options on here.
+
+    Drawing options:
+
+    figsize: (width, height) per shank, in inches; ``fig`` is resized to fit
+        the probe.
+    anatomy_bands: optional list of brain-region bands, shaded over each
+        shank and labelled with their acronym; each a dict with ``shank_id``,
+        ``y_min`` and ``y_max`` (um, probe coordinates), ``color`` and
+        ``acronym``.
+    survey_colors: optional ``{(shank_id, electrode_id): hex colour}`` filling
+        a survey bar beside each shank (electrodes not in it are light grey).
+    survey_range: optional ``(vmin, vmax)``; together with ``survey_colors``,
+        adds a viridis colorbar over that range above the legend.
     """
 
     # Format parameters
