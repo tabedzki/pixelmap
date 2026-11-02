@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
    && rm -rf /var/lib/apt/lists/*
 # Set the working directory
 WORKDIR /app
+ENV PYTHONUNBUFFERED=1
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 ENV UV_CACHE_DIR=/root/.cache/uv

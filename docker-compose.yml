@@ -18,6 +18,7 @@ services:
       - ANALYTICS_COOKIE_MAX_AGE_DAYS=365
       - ANALYTICS_COOKIE_SAMESITE=Lax
       - ANALYTICS_COOKIE_SECURE=false
+      - PIXELMAP_LOG_LEVEL=${PIXELMAP_LOG_LEVEL:-INFO}
       # Log a "[watchdog]" WARNING (with the blocked stack) when the event
       # loop is stuck this long, and once when RSS crosses this many MB. See
       # pixelmap/gui/watchdog.py. Set PIXELMAP_STALL_WARN_S=0 to disable.
