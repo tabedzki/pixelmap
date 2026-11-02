@@ -80,7 +80,7 @@ before = root.handlers[:]
 import pixelmap
 assert root.handlers == before
 assert not logging.getLogger('pixelmap').handlers
-'''], capture_output=True, text=True)
+'''], check=False, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 
@@ -133,8 +133,7 @@ def test_cleanup_traceback(monkeypatch, caplog):
 
 def test_registry_fallback_traceback(monkeypatch, caplog):
     from pixelmap.anatomy import atlas
-    monkeypatch.setattr(atlas, '_open_annotation_store', MagicMock(side_effect=OSError('bad store')))
-    monkeypatch.setattr(atlas, '_axes_for_atlas', MagicMock(), raising=False)
+    monkeypatch.setattr(atlas, 'get_downloaded_atlases', lambda: ['test'])
     # A failed metadata lookup preserves the not-downloaded fallback.
     monkeypatch.setattr(atlas, 'get_atlas', MagicMock(side_effect=OSError('bad metadata')))
     caplog.set_level(logging.DEBUG, logger=atlas.__name__)

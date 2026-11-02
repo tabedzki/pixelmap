@@ -1,5 +1,6 @@
 """For general panel serving, both in Docker and in Ploomber"""
 
+import logging
 import socket
 import threading
 import time
@@ -11,6 +12,9 @@ import psutil
 from pixelmap.error_reporting import install_global_handlers
 from pixelmap.gui import watchdog
 from pixelmap.gui.gui import create_app
+from pixelmap.gui.logging_config import configure_logging
+
+log = logging.getLogger(__name__)
 
 pn.extension(notifications=True)
 # Background-thread and top-level errors go to the error webhook too.
@@ -39,7 +43,7 @@ def memory_monitorer():
     process = psutil.Process()
     while True:
         memory_mb = process.memory_info().rss / 1024 / 1024
-        print(f"Memory usage: {memory_mb:.1f} MB")
+        log.debug(f"Memory usage: {memory_mb:.1f} MB")
         time.sleep(10)
 
 
@@ -61,24 +65,26 @@ def _log_session_start():
         session_id = session_context.id
         num_sessions = len(session_context.server_context.sessions)
         rss_mb = psutil.Process().memory_info().rss / 1024 / 1024
-        print(
+        log.info(
             f"Session {session_id} starting "
             f"({num_sessions} live sessions, RSS {rss_mb:.1f} MB)"
         )
-    except Exception:  # noqa: BLE001 - falls back to the old message, never raises
+    except Exception:
+        log.debug("Session context unavailable outside server", exc_info=True)
         # session_context (and its server_context) is only populated when
         # running under an actual Bokeh server -- fall back rather than
         # error out of the app.
-        print("Starting app...")
+        log.info("Starting app...")
 
 
 def main(show=True, local=True):
+    configure_logging()
     # Monitor potential memory leak
     # monitor_memory()
 
     # Serve the app
     if local:
-        print("Starting app...")
+        log.info("Starting app...")
         port = find_free_port(5003)
         pn.serve(
             create_app,

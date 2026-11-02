@@ -36,7 +36,7 @@ import time
 import traceback
 from collections.abc import Callable
 
-log = logging.getLogger("pixelmap.watchdog")
+log = logging.getLogger(__name__)
 
 #: The process-wide watchdog, so :func:`install` is idempotent -- ``app.py`` is
 #: re-executed for every Bokeh session, but this module is imported once.

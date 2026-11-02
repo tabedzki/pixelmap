@@ -32,7 +32,7 @@ def clock():
 
 @pytest.fixture
 def caplog_warn(caplog):
-    caplog.set_level(logging.INFO, logger="pixelmap.watchdog")
+    caplog.set_level(logging.INFO, logger=watchdog.__name__)
     return caplog
 
 

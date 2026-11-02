@@ -56,6 +56,7 @@ import ctypes
 import ctypes.util
 import functools
 import gc
+import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,6 +75,8 @@ from brainglobe_atlasapi.list_atlases import (
 
 from pixelmap.anatomy._registry_snapshot import REGISTRY_SNAPSHOT
 from pixelmap.anatomy.volume import CanonicalVolume
+
+log = logging.getLogger(__name__)
 
 _DEFAULT_ATLAS = "allen_mouse_25um"
 
@@ -148,8 +151,8 @@ def _malloc_trim() -> None:
         return
     try:
         trim(0)
-    except Exception:  # noqa: BLE001, S110 - best-effort reclaim, never fatal
-        pass
+    except Exception:
+        log.exception("Could not reclaim atlas memory")
 
 
 @functools.lru_cache(maxsize=1)
@@ -244,7 +247,8 @@ def _open_volume(atlas) -> CanonicalVolume:
     resolution = (axes["AP"].res_um, axes["DV"].res_um, axes["ML"].res_um)
     try:
         store = _open_annotation_store(atlas)
-    except Exception:  # noqa: BLE001 - any failure falls back to the eager read
+    except Exception:
+        log.debug("Lazy atlas store unavailable; using eager annotation", exc_info=True)
         store = atlas.annotation
     return CanonicalVolume(store, axes, resolution)
 
@@ -356,8 +360,8 @@ def _registry_from_disk() -> list[str] | None:
         if cache_path.exists():
             data = utils.conf_from_file(cache_path)
             return sorted(data["atlases"].keys())
-    except Exception:  # noqa: BLE001, S110 - unreadable registry cache: fall back to None
-        pass
+    except Exception:
+        log.debug("Could not read atlas registry cache", exc_info=True)
     return None
 
 
@@ -391,8 +395,8 @@ def _refresh_registry_in_background() -> None:
             get_all_atlases_lastversions()
             if _registry_from_disk():
                 list_atlases.cache_clear()
-        except Exception:  # noqa: BLE001, S110 - background refresh; stale registry is fine
-            pass
+        except Exception:
+            log.exception("Atlas registry refresh failed")
         finally:
             with _registry_refresh_lock:
                 _registry_refresh_running = False
@@ -427,7 +431,8 @@ def is_downloaded(name: str = _DEFAULT_ATLAS) -> bool:
         return False
     try:
         return _annotation_is_cached(get_atlas(name))
-    except Exception:  # noqa: BLE001 - unreadable atlas means not downloaded
+    except Exception:
+        log.debug("Atlas metadata unavailable", exc_info=True)
         # Metadata unreadable, or the manifest is there but incomplete: treat
         # it as not-downloaded so callers take the "this will cost you" path.
         return False

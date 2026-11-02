@@ -38,7 +38,6 @@ from bokeh.models import (
 )
 from bokeh.palettes import Viridis256
 from bokeh.plotting import figure
-from bokeh.util.logconfig import basicConfig
 
 from pixelmap import __version__, backend, error_reporting
 from pixelmap.analytics import AnalyticsSessionTracker
@@ -62,8 +61,7 @@ from pixelmap.types import Electrode
 from pixelmap.utils import imro, survey, url_share
 from pixelmap.utils.survey import default_survey_range
 
-## Configure logging
-basicConfig(level=logging.ERROR)  # no warnings
+log = logging.getLogger(__name__)
 
 # Paths to assets
 WIRING_MAPS_DIR = Path(__file__).resolve().parent.parent / "wiring_maps"
@@ -332,7 +330,7 @@ class ChannelmapGUI(param.Parameterized):
         # No gc.collect() here: this runs on the shared event loop for every
         # closed tab, and a full collection froze all sessions for ~6 s in
         # production.  The regular generational GC reclaims the cycles.
-        print(f"🧹🧹🧹 Session {session_context.id} cleaned up")
+        log.info(f"🧹🧹🧹 Session {session_context.id} cleaned up")
 
 
     #####################################
@@ -694,7 +692,7 @@ class ChannelmapGUI(param.Parameterized):
         if not new:  # No selection
             return
 
-        print(f"Selection changed: {old} -> {new}")
+        log.debug(f"Selection changed: {old} -> {new}")
 
         # One interactive gesture (tap, box drag, zigzag drag) = one undo step.
         self.electrodes.push_undo_snapshot()
@@ -714,7 +712,7 @@ class ChannelmapGUI(param.Parameterized):
         elif len(new) > 1:
 
             if self.select_mode == "deselect":
-                print(f"Box deselect: {len(new)} electrodes")
+                log.debug(f"Box deselect: {len(new)} electrodes")
                 for idx in new:
                     shank_id = self.electrode_source.data["shank_id"][idx]
                     electrode_id = self.electrode_source.data["electrode_id"][idx]
@@ -722,7 +720,7 @@ class ChannelmapGUI(param.Parameterized):
 
 
             elif self.select_mode == "select":
-                print(f"Box select: {len(new)} electrodes")
+                log.debug(f"Box select: {len(new)} electrodes")
                 for idx in new:
                     shank_id = self.electrode_source.data["shank_id"][idx]
                     electrode_id = self.electrode_source.data["electrode_id"][idx]
@@ -730,7 +728,7 @@ class ChannelmapGUI(param.Parameterized):
 
             elif self.select_mode == "zigzag_select":
                 # zigzag logic - even electrodes in 1.0, 0, 3, 4, 7, 8... if 2.0
-                print(f"Box zigzag select: {len(new)} electrodes")
+                log.debug(f"Box zigzag select: {len(new)} electrodes")
                 zigzag_subset = self.get_zigzag_subset()
                 for idx in new:
                     shank_id = self.electrode_source.data["shank_id"][idx]
@@ -740,7 +738,7 @@ class ChannelmapGUI(param.Parameterized):
 
             elif self.select_mode == "interleaved_select":
                 # interleaved logic - rows 0,1 then skip 2,3, then rows 4,5... (0,1,4,5,8,9...)
-                print(f"Box interleaved select: {len(new)} electrodes")
+                log.debug(f"Box interleaved select: {len(new)} electrodes")
                 interleaved_subset = self.get_interleaved_subset()
                 for idx in new:
                     shank_id = self.electrode_source.data["shank_id"][idx]
@@ -901,8 +899,8 @@ class ChannelmapGUI(param.Parameterized):
             self.update_electrode_counter()
             self.refresh_undo_buttons()
 
-        except Exception as e:  # noqa: BLE001 - bad user input must not crash the session
-            print(f"Error parsing electrode input: {e}")
+        except Exception:
+            log.exception("Error parsing electrode input")
 
 
     def clear_selection(self):
@@ -924,12 +922,12 @@ class ChannelmapGUI(param.Parameterized):
     def ready_to_download(self):
         # Check number of selected electrodes
         if not any(self.electrodes.selected):
-            print("No electrodes selected")
+            log.debug("No electrodes selected")
             return False
         n_selected = len(self.electrodes.selected)
         max_allowed = self.electrodes.n_maximum_electrodes
         if n_selected < max_allowed:
-            print(f"IMRO file NOT generated - you still have {max_allowed - n_selected} electrodes to select!")
+            log.debug(f"IMRO file NOT generated - you still have {max_allowed - n_selected} electrodes to select!")
             return False
         return True
 
@@ -1109,7 +1107,8 @@ class ChannelmapGUI(param.Parameterized):
             parsed_lf_gain,
             parsed_hp_filter,
             ) = imro.parse_imro_list(imro_list)
-        except:
+        except Exception:
+            log.exception("Failed to parse uploaded imro file")
             _notify("error", "Failed to parse uploaded imro file.")
             return
 
@@ -1187,7 +1186,8 @@ class ChannelmapGUI(param.Parameterized):
         default = "allen_mouse_25um"
         try:
             atlases = anatomy_atlas.list_atlases()
-        except Exception:  # noqa: BLE001 - registry unavailable: offer the default atlas
+        except Exception:
+            log.exception("Atlas registry lookup failed")
             return [default], default
         if not atlases:
             return [default], default
@@ -1266,8 +1266,8 @@ class ChannelmapGUI(param.Parameterized):
         self.compute_anatomy_button.disabled = True
         try:
             await asyncio.to_thread(anatomy_atlas.ensure_downloaded, name)
-        except Exception as exc:  # noqa: BLE001 - any download failure is reported to the user
-            print(f"Atlas download failed: {exc}")
+        except Exception:
+            log.exception("Atlas download failed")
             self.compute_anatomy_button.name = "Download & compute atlas 🧠 ⏳"
             _notify(
                 "error",
@@ -1308,8 +1308,8 @@ class ChannelmapGUI(param.Parameterized):
                 atlas_name=atlas_name,
                 step_um=25.0,
             )
-        except Exception as exc:  # noqa: BLE001 - any lookup failure is reported to the user
-            print(f"Anatomy lookup failed: {exc}")
+        except Exception:
+            log.exception("Anatomy lookup failed")
             self.compute_anatomy_button.name = "Compute anatomical overlay 🧠"
             self.compute_anatomy_button.disabled = False
             return
@@ -1413,8 +1413,8 @@ class ChannelmapGUI(param.Parameterized):
             )
             self._locator_fig = _fig
             self.anatomy_locator.object = self._fig_to_locator_html(_fig)
-        except Exception as exc:  # noqa: BLE001 - a failed locator shouldn't sink the overlay
-            print(f"Locator render failed: {exc}")
+        except Exception:
+            log.exception("Locator render failed")
 
         # Hand back the chunk buffers this render churned through.  They are
         # already freed; this is what unmaps them, so repeated overlay computes
@@ -1513,7 +1513,8 @@ class ChannelmapGUI(param.Parameterized):
                     anatomy_atlas.orientation_code(name),
                     anatomy_atlas.origin_corner(name),
                 )
-        except Exception:  # noqa: BLE001 - unreadable atlas metadata: no native orientation
+        except Exception:
+            log.debug("Atlas native orientation unavailable", exc_info=True)
             native = None
         if native:
             code, origin = native
@@ -1627,7 +1628,8 @@ class ChannelmapGUI(param.Parameterized):
         """True if the selected atlas is on disk, so reading it won't download."""
         try:
             return anatomy_atlas.is_downloaded(str(self.atlas_name_input.value).strip())
-        except Exception:  # noqa: BLE001 - unreadable atlas means not downloaded
+        except Exception:
+            log.debug("Atlas metadata unavailable", exc_info=True)
             return False
 
     def _tip_depth_below_surface(self) -> float | None:
@@ -1646,8 +1648,8 @@ class ChannelmapGUI(param.Parameterized):
                 yaw_deg=float(self.yaw_input.value),
                 atlas_name=str(self.atlas_name_input.value).strip(),
             )
-        except Exception as exc:  # noqa: BLE001 - a readout must never sink the GUI
-            print(f"Tip depth lookup failed: {exc}")
+        except Exception:
+            log.exception("Tip depth lookup failed")
             return None
 
     def _tip_depth_readout_html(self) -> str:
@@ -1714,7 +1716,8 @@ class ChannelmapGUI(param.Parameterized):
             if not anatomy_atlas.is_downloaded(name):
                 return None
             return anatomy_atlas.volume_center_um(name)
-        except Exception:  # noqa: BLE001 - no atlas centre: keep the current tip
+        except Exception:
+            log.debug("Atlas centre unavailable", exc_info=True)
             return None
 
     def _update_tip_to_atlas_center(self, *events):
@@ -1779,7 +1782,8 @@ class ChannelmapGUI(param.Parameterized):
                 return spec
             try:
                 ac = anatomy_atlas.derive_origin_from_ac(name)
-            except Exception:  # noqa: BLE001 - AC not derivable: handled as ac is None below
+            except Exception:
+                log.debug("Atlas AC origin unavailable", exc_info=True)
                 ac = None
             if ac is None:
                 # AC is the convention but this atlas doesn't delineate it
@@ -1928,8 +1932,8 @@ class ChannelmapGUI(param.Parameterized):
                     full_url = origin + pathname + query
                 # Reflect the new state in the address bar so it's also copyable from there.
                 location.search = query
-        except Exception:  # noqa: BLE001, S110 - address-bar update is cosmetic; still copy
-            pass
+        except Exception:
+            log.debug("Could not update address bar", exc_info=True)
         # Trigger the JS clipboard copy via the hidden TextInput watcher.
         # Counter prefix ensures value always changes so jscallback fires on re-click.
         self._share_link_counter += 1
@@ -2334,29 +2338,29 @@ class ChannelmapGUI(param.Parameterized):
         """Handle tool detection during selection"""
         if new.get("active_tool"):
             active_tool = new["active_tool"][0]
-            print(f"Selection made with tool: {active_tool}")
+            log.debug(f"Selection made with tool: {active_tool}")
 
             if active_tool == "select":
                 self.select_mode = "select"
-                print("→ SELECT box activated")
+                log.debug("→ SELECT box activated")
             elif active_tool == "deselect":
                 self.select_mode = "deselect"
-                print("→ DESELECT box activated")
+                log.debug("→ DESELECT box activated")
             elif active_tool == "zigzag_select":
                 self.select_mode = "zigzag_select"
-                print("→ ZIGZAG-SELECT box activated")
+                log.debug("→ ZIGZAG-SELECT box activated")
             elif active_tool == "interleaved_select":
                 self.select_mode = "interleaved_select"
-                print("→ INTERLEAVED-SELECT box activated")
+                log.debug("→ INTERLEAVED-SELECT box activated")
             elif active_tool == "dependent_deselect":
                 self.select_mode = "dependent_deselect"
-                print("→ DESELECT-DEPENDENTS box activated")
+                log.debug("→ DESELECT-DEPENDENTS box activated")
             elif active_tool == "zigzag_dependent_deselect":
                 self.select_mode = "zigzag_dependent_deselect"
-                print("→ ZIGZAG-DESELECT-DEPENDENTS box activated")
+                log.debug("→ ZIGZAG-DESELECT-DEPENDENTS box activated")
             else:
                 self.select_mode = "select"
-                print(f"→ Unexpected result: {active_tool}, defaulting to SELECT box")
+                log.debug(f"→ Unexpected result: {active_tool}, defaulting to SELECT box")
 
     def _build_subtype_options(self):
         """Dict of {'NP2013 – Description (SpikeGLX probe type: 2013, IMRO format: imro_np2013)': 'NP2013'} for the current probe_type."""
@@ -3215,7 +3219,8 @@ def _extract_cfg_from_session_args() -> str | None:
     """Pull the ``cfg`` query param out of pn.state.session_args, if any."""
     try:
         args = pn.state.session_args or {}
-    except Exception:  # noqa: BLE001 - no session args outside a server session
+    except Exception:
+        log.debug("Session arguments unavailable outside server", exc_info=True)
         return None
     raw = args.get(url_share.QUERY_PARAM)
     if not raw:
@@ -3253,8 +3258,8 @@ def _release_dead_session_views(session_context):
             continue
         try:
             view._cleanup(root)
-        except Exception as exc:  # noqa: BLE001 - a failed cleanup must not keep the session pinned
-            print(f"View cleanup failed for {type(view).__name__}: {exc}")
+        except Exception:
+            log.exception("View cleanup failed for %s", type(view).__name__)
         pn.state._views.pop(ref, None)
 
 
@@ -3276,7 +3281,7 @@ def create_app():
 
     try:
         gui = ChannelmapGUI()
-    except Exception as exc:  # noqa: BLE001 - any startup failure gets an error page
+    except Exception as exc:  # noqa: BLE001 - report_error logs and returns an error page
         # Show the visitor something instead of a blank page.
         error_reporting.report_error(exc, context="session startup", notify_user=False)
         return pn.pane.Alert(
@@ -3290,9 +3295,9 @@ def create_app():
         try:
             applied = gui.apply_url_state(cfg)
             if not applied:
-                print("Ignored invalid or unsupported ?cfg= share link.")
-        except Exception as e:  # noqa: BLE001 - a bad share link must not break app start
-            print(f"Failed to apply shared layout from URL: {e}")
+                log.info("Ignored invalid or unsupported ?cfg= share link.")
+        except Exception:
+            log.exception("Failed to apply shared layout from URL")
 
     analytics_tracker = AnalyticsSessionTracker()
     layout = gui.create_layout()
