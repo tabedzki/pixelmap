@@ -1,6 +1,7 @@
 """Regression tests for the package's public imports and documented API."""
 
 import importlib
+import inspect
 import json
 import re
 from pathlib import Path
@@ -78,14 +79,22 @@ def _star_import():
     return namespace
 
 
-def _documented_files():
-    paths = [
+DOC_FILES = sorted(
+    [
         path
         for path in (ROOT / "docs").rglob("*")
         if path.suffix in {".md", ".rst", ".py"} and "_build" not in path.parts
     ]
-    paths.extend(ROOT.glob("README*"))
-    return paths
+    + list(ROOT.glob("README*"))
+)
+_SKIPPED_DIRS = {".venv", ".git", "_build", "node_modules"}
+NOTEBOOKS = sorted(
+    path for path in ROOT.rglob("*.ipynb") if not _SKIPPED_DIRS & set(path.relative_to(ROOT).parts)
+)
+
+
+def _rel(path):
+    return path.relative_to(ROOT).as_posix()
 
 
 def test_all_lists_exactly_the_supported_api():
@@ -138,7 +147,7 @@ def test_package_version_remains_accessible():
 
 def test_documented_api_names_resolve():
     references = set()
-    for path in _documented_files():
+    for path in DOC_FILES:
         # Exclude URLs and paths such as github.com/m-beau/pixelmap.git.
         for name in re.findall(r"(?<![\w/.-])(?:cmg|pixelmap)\.(\w+)", path.read_text()):
             references.add(name)
@@ -202,3 +211,40 @@ def test_documented_workflow_round_trips(tmp_path, probe_type, preset):
     assert parsed_probe_type == probe_type
     assert len(selected) == 384
     assert len(np.unique(selected, axis=0)) == 384
+
+
+@pytest.mark.parametrize("doc", DOC_FILES, ids=_rel)
+def test_documented_wiring_paths_resolve_from_anywhere(doc):
+    text = doc.read_text()
+    # `"wiring_maps/..."` only resolves from inside the package directory.
+    relative = re.findall(r'"wiring_maps/[^"]*"', text)
+    assert not relative, f"{_rel(doc)} uses working-directory-relative paths: {relative}"
+    names = set(re.findall(r'"([\w.-]+_wiring\.csv)"', text))
+    missing = sorted(n for n in names if not (WIRING_DIR / n).exists())
+    assert not missing, f"{_rel(doc)} names wiring files that don't exist: {missing}"
+
+
+def test_generate_imro_channelmap_docstring_matches_behaviour():
+    doc = inspect.getdoc(imro.generate_imro_channelmap)
+    args, returns = doc.split("Args:", 1)[1].split("Returns:", 1)
+    documented = re.findall(r"^\s{4}(\w+):", args, flags=re.MULTILINE)
+    assert documented == list(inspect.signature(imro.generate_imro_channelmap).parameters)
+    assert "list" in returns.lower()
+
+    line = next(ln for ln in args.splitlines() if ln.strip().startswith("probe_type:"))
+    listed = re.findall(r'"([^"]+)"', line)
+    assert listed, "probe_type should list the supported values"
+    assert set(listed) == set(constants.WIRING_FILE_MAP)
+
+
+@pytest.mark.parametrize("path", [*NOTEBOOKS, *DOC_FILES], ids=_rel)
+def test_examples_have_no_absolute_user_paths(path):
+    """Shared examples must not depend on a contributor's home directory."""
+    # Covers plain text and JSON-escaped Windows paths in notebook cells.
+    assert not re.search(r"/Users/|[A-Za-z]:\\+Users", path.read_text()), (
+        f"{_rel(path)} contains an absolute user path"
+    )
+
+
+def test_example_notebook_is_found():
+    assert ROOT / "generate_channel_maps.ipynb" in NOTEBOOKS
