@@ -222,3 +222,16 @@ def test_install_disabled_by_nonpositive_threshold(fresh_install, threshold):
         return watchdog.install(stall_threshold_s=threshold, rss_warn_mb=None)
 
     assert asyncio.run(run()) is None
+
+
+def test_notifier_contract(clock, caplog_warn):
+    # Production's docker-logs notifier matches these exact substrings.
+    wd = StallWatchdog(threshold_s=5, clock=clock)
+    wd.beat()
+    clock.t += 6
+    wd.check()
+    wd.beat()
+    MemoryWatch(100).check(101)
+    for text in ('[watchdog] event loop blocked', '[watchdog] event loop recovered',
+                 '[watchdog] RSS'):
+        assert any(text in r.getMessage() for r in caplog_warn.records)

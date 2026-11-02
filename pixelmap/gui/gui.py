@@ -330,7 +330,7 @@ class ChannelmapGUI(param.Parameterized):
         # No gc.collect() here: this runs on the shared event loop for every
         # closed tab, and a full collection froze all sessions for ~6 s in
         # production.  The regular generational GC reclaims the cycles.
-        log.info(f"🧹🧹🧹 Session {session_context.id} cleaned up")
+        log.info("🧹🧹🧹 Session %s cleaned up", session_context.id)
 
 
     #####################################
@@ -692,7 +692,7 @@ class ChannelmapGUI(param.Parameterized):
         if not new:  # No selection
             return
 
-        log.debug(f"Selection changed: {old} -> {new}")
+        log.debug("Selection changed: %s -> %s", old, new)
 
         # One interactive gesture (tap, box drag, zigzag drag) = one undo step.
         self.electrodes.push_undo_snapshot()
@@ -712,7 +712,7 @@ class ChannelmapGUI(param.Parameterized):
         elif len(new) > 1:
 
             if self.select_mode == "deselect":
-                log.debug(f"Box deselect: {len(new)} electrodes")
+                log.debug("Box deselect: %s electrodes", len(new))
                 for idx in new:
                     shank_id = self.electrode_source.data["shank_id"][idx]
                     electrode_id = self.electrode_source.data["electrode_id"][idx]
@@ -720,7 +720,7 @@ class ChannelmapGUI(param.Parameterized):
 
 
             elif self.select_mode == "select":
-                log.debug(f"Box select: {len(new)} electrodes")
+                log.debug("Box select: %s electrodes", len(new))
                 for idx in new:
                     shank_id = self.electrode_source.data["shank_id"][idx]
                     electrode_id = self.electrode_source.data["electrode_id"][idx]
@@ -728,7 +728,7 @@ class ChannelmapGUI(param.Parameterized):
 
             elif self.select_mode == "zigzag_select":
                 # zigzag logic - even electrodes in 1.0, 0, 3, 4, 7, 8... if 2.0
-                log.debug(f"Box zigzag select: {len(new)} electrodes")
+                log.debug("Box zigzag select: %s electrodes", len(new))
                 zigzag_subset = self.get_zigzag_subset()
                 for idx in new:
                     shank_id = self.electrode_source.data["shank_id"][idx]
@@ -738,7 +738,7 @@ class ChannelmapGUI(param.Parameterized):
 
             elif self.select_mode == "interleaved_select":
                 # interleaved logic - rows 0,1 then skip 2,3, then rows 4,5... (0,1,4,5,8,9...)
-                log.debug(f"Box interleaved select: {len(new)} electrodes")
+                log.debug("Box interleaved select: %s electrodes", len(new))
                 interleaved_subset = self.get_interleaved_subset()
                 for idx in new:
                     shank_id = self.electrode_source.data["shank_id"][idx]
@@ -927,7 +927,7 @@ class ChannelmapGUI(param.Parameterized):
         n_selected = len(self.electrodes.selected)
         max_allowed = self.electrodes.n_maximum_electrodes
         if n_selected < max_allowed:
-            log.debug(f"IMRO file NOT generated - you still have {max_allowed - n_selected} electrodes to select!")
+            log.debug("IMRO file NOT generated - you still have %s electrodes to select!", max_allowed - n_selected)
             return False
         return True
 
@@ -2340,7 +2340,7 @@ class ChannelmapGUI(param.Parameterized):
         """Handle tool detection during selection"""
         if new.get("active_tool"):
             active_tool = new["active_tool"][0]
-            log.debug(f"Selection made with tool: {active_tool}")
+            log.debug("Selection made with tool: %s", active_tool)
 
             if active_tool == "select":
                 self.select_mode = "select"
@@ -2362,7 +2362,7 @@ class ChannelmapGUI(param.Parameterized):
                 log.debug("→ ZIGZAG-DESELECT-DEPENDENTS box activated")
             else:
                 self.select_mode = "select"
-                log.debug(f"→ Unexpected result: {active_tool}, defaulting to SELECT box")
+                log.debug("→ Unexpected result: %s, defaulting to SELECT box", active_tool)
 
     def _build_subtype_options(self):
         """Dict of {'NP2013 – Description (SpikeGLX probe type: 2013, IMRO format: imro_np2013)': 'NP2013'} for the current probe_type."""

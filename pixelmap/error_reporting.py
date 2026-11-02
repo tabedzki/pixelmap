@@ -346,13 +346,17 @@ _REPORTER = ErrorReporter()
 
 
 class ExceptionWebhookHandler(logging.Handler):
-    """Forward exception records only; reporter diagnostics must never recurse."""
+    """Forward exception records only; reporter diagnostics must never recurse.
+
+    Routing rule: ERROR records with an exception page the webhook; user-input
+    faults log at WARNING.
+    """
 
     def __init__(self):
         super().__init__(level=logging.ERROR)
 
     def emit(self, record: logging.LogRecord) -> None:
-        if record.name == "pixelmap.errors" or record.name.startswith("pixelmap.errors."):
+        if record.name.startswith("pixelmap.errors"):
             return
         if not record.exc_info or record.exc_info[1] is None:
             return

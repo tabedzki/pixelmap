@@ -43,7 +43,7 @@ def memory_monitorer():
     process = psutil.Process()
     while True:
         memory_mb = process.memory_info().rss / 1024 / 1024
-        log.debug(f"Memory usage: {memory_mb:.1f} MB")
+        log.debug("Memory usage: %.1f MB", memory_mb)
         time.sleep(10)
 
 

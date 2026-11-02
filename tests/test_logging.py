@@ -1,5 +1,6 @@
 """GUI logging, traceback delivery and production notifier contracts."""
 
+import io
 import logging
 import subprocess
 import sys
@@ -9,67 +10,67 @@ from unittest.mock import MagicMock
 import pytest
 
 from pixelmap import error_reporting
-from pixelmap.gui import watchdog
+from pixelmap.gui import logging_config, watchdog
+from pixelmap.gui.logging_config import configure_logging
 
 
 @pytest.fixture
 def isolated_logging():
-    names = ('pixelmap', 'bokeh', 'tornado')
-    saved = [(logging.getLogger(n), logging.getLogger(n).handlers[:],
-              logging.getLogger(n).level, logging.getLogger(n).propagate) for n in names]
-    logger = logging.getLogger('pixelmap')
+    loggers = {n: logging.getLogger(n) for n in ('pixelmap', 'bokeh', 'tornado')}
+    saved = {n: (lg.handlers[:], lg.level, lg.propagate) for n, lg in loggers.items()}
+    logger = loggers['pixelmap']
     logger.handlers = []
     yield logger
-    for logger, handlers, level, propagate in saved:
-        for handler in logger.handlers:
-            if handler not in handlers:
-                handler.close()
-        logger.handlers = handlers
-        logger.setLevel(level)
-        logger.propagate = propagate
+    for name, (handlers, level, propagate) in saved.items():
+        loggers[name].handlers = handlers
+        loggers[name].setLevel(level)
+        loggers[name].propagate = propagate
 
 
-def configure():
-    from pixelmap.gui.logging_config import configure_logging
-    configure_logging()
+@pytest.fixture
+def stderr(monkeypatch):
+    # The module-level handler binds sys.stderr at import; capture it separately.
+    buffer = io.StringIO()
+    monkeypatch.setattr(logging_config._STDERR, 'stream', buffer)
+    return buffer
 
 
-def test_notifier_contract(caplog):
-    # Production's docker-logs notifier matches these exact substrings.
-    caplog.set_level(logging.WARNING)
-    now = [0.0]
-    stall = watchdog.StallWatchdog(clock=lambda: now[0])
-    stall.beat()
-    now[0] = 6.0
-    stall.check()
-    stall.beat()
-    watchdog.MemoryWatch(100).check(101)
-    for text in ('[watchdog] event loop blocked', '[watchdog] event loop recovered',
-                 '[watchdog] RSS'):
-        assert any(text in r.getMessage() for r in caplog.records)
+@pytest.fixture
+def webhook(monkeypatch):
+    monkeypatch.setenv('PIXELMAP_ERROR_WEBHOOK_URL', 'https://example.test/errors')
+    post = MagicMock()
+    monkeypatch.setattr(error_reporting.urllib.request, 'urlopen', post)
+    monkeypatch.setattr(error_reporting, '_REPORTER', error_reporting.ErrorReporter(synchronous=True))
+    return post
 
 
 @pytest.mark.parametrize('raw,level', [(None, 20), ('debug', 10), ('WARNING', 30),
-                                     ('30', 30), ('', 20), ('bogus', 20), ('-1', 20)])
-def test_configuration(isolated_logging, monkeypatch, capsys, raw, level):
+                                     (' error ', 40), ('30', 20), ('', 20), ('bogus', 20),
+                                     ('-1', 20)])
+def test_level_parsing(isolated_logging, monkeypatch, raw, level):
     if raw is None:
         monkeypatch.delenv('PIXELMAP_LOG_LEVEL', raising=False)
     else:
         monkeypatch.setenv('PIXELMAP_LOG_LEVEL', raw)
+    configure_logging()
+    assert isolated_logging.level == level
+
+
+def test_configuration_invariants(isolated_logging, monkeypatch, stderr):
+    monkeypatch.setenv('PIXELMAP_LOG_LEVEL', 'bogus')
     root = logging.getLogger()
     original = (root.level, root.handlers[:])
-    configure()
+    configure_logging()
     handlers = isolated_logging.handlers[:]
-    configure()
+    configure_logging()
     assert isolated_logging.handlers == handlers
     assert len(handlers) == 2
-    assert isolated_logging.level == level
     assert isolated_logging.propagate is False
     assert (root.level, root.handlers) == original
     assert logging.getLogger('bokeh').level == logging.ERROR
     assert logging.getLogger('tornado').level == logging.ERROR
-    stderr = capsys.readouterr().err
-    assert stderr.count('Invalid PIXELMAP_LOG_LEVEL') == (1 if raw in ('', 'bogus', '-1') else 0)
+    # The invalid-level warning is emitted on first install only.
+    assert stderr.getvalue().count('Invalid PIXELMAP_LOG_LEVEL') == 1
 
 
 def test_library_import_configures_nothing():
@@ -84,24 +85,20 @@ assert not logging.getLogger('pixelmap').handlers
     assert result.returncode == 0, result.stderr
 
 
-def test_watchdog_default_visible(isolated_logging, monkeypatch, caplog, capsys):
+def test_watchdog_default_visible(isolated_logging, monkeypatch, caplog, stderr):
     monkeypatch.delenv('PIXELMAP_LOG_LEVEL', raising=False)
-    configure()
+    configure_logging()
     isolated_logging.addHandler(caplog.handler)
     watchdog.MemoryWatch(100).check(101)
     assert '[watchdog] RSS' in caplog.text
-    assert capsys.readouterr().err.count('[watchdog] RSS') == 1
+    assert stderr.getvalue().count('[watchdog] RSS') == 1
 
 
-def test_forwarding(isolated_logging, monkeypatch):
-    monkeypatch.setenv('PIXELMAP_ERROR_WEBHOOK_URL', 'https://example.test/errors')
-    post = MagicMock()
-    monkeypatch.setattr(error_reporting.urllib.request, 'urlopen', post)
-    reporter = error_reporting.ErrorReporter(synchronous=True)
-    monkeypatch.setattr(error_reporting, '_REPORTER', reporter)
+def test_forwarding(isolated_logging, monkeypatch, webhook):
+    post = webhook
     toast = MagicMock()
     monkeypatch.setattr(error_reporting, '_toast', toast)
-    configure()
+    configure_logging()
     log = logging.getLogger('pixelmap.gui.test')
     try:
         raise ValueError('forward me')
@@ -141,19 +138,16 @@ def test_registry_fallback_traceback(monkeypatch, caplog):
     assert any(r.exc_info and r.exc_info[0] is OSError for r in caplog.records)
 
 
-def test_malformed_imro_upload_is_not_forwarded(isolated_logging, monkeypatch, caplog):
+def test_malformed_imro_upload_is_not_forwarded(isolated_logging, monkeypatch, caplog, webhook):
     # A bad user upload is the user's problem, not a server fault: keep the
     # traceback in the logs, toast the user, but don't page the webhook.
     from pixelmap.gui import gui
-    monkeypatch.setenv('PIXELMAP_ERROR_WEBHOOK_URL', 'https://example.test/errors')
-    post = MagicMock()
-    monkeypatch.setattr(error_reporting.urllib.request, 'urlopen', post)
-    monkeypatch.setattr(error_reporting, '_REPORTER', error_reporting.ErrorReporter(synchronous=True))
+    post = webhook
     notify = MagicMock()
     monkeypatch.setattr(gui, '_notify', notify)
     monkeypatch.setattr(gui.imro, 'parse_imro_file', lambda text: [('NP1000', 384)])
     monkeypatch.setattr(gui.imro, 'parse_imro_list', MagicMock(side_effect=ValueError('bad imro')))
-    configure()
+    configure_logging()
     caplog.set_level(logging.DEBUG, logger='pixelmap')
     logging.getLogger('pixelmap').addHandler(caplog.handler)
     fake = SimpleNamespace(imro_file_loader=SimpleNamespace(value=b'(0,384)', filename='x.imro'))

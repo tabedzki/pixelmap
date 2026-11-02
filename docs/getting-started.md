@@ -66,8 +66,7 @@ RSS is logged to stdout every 60 s.
 **Logging**: GUI/server logs go to stderr with timestamps, levels and logger
 names; exception tracebacks reach `docker logs`. Set `PIXELMAP_LOG_LEVEL`
 (default `INFO`) to `DEBUG` for detailed troubleshooting or `WARNING` for
-alerts only. Level names are case-insensitive; numeric Python logging levels
-are also accepted. Invalid values fall back to `INFO` with one warning.
+alerts only. Level names are case-insensitive. Invalid values fall back to `INFO` with one warning.
 Library imports leave logging configuration to the caller.
 :::
 
