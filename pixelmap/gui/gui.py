@@ -1108,7 +1108,9 @@ class ChannelmapGUI(param.Parameterized):
             parsed_hp_filter,
             ) = imro.parse_imro_list(imro_list)
         except Exception:
-            log.exception("Failed to parse uploaded imro file")
+            # A malformed upload is user error, not a server fault: keep the
+            # traceback but stay below ERROR so it is not sent to the webhook.
+            log.warning("Failed to parse uploaded imro file", exc_info=True)
             _notify("error", "Failed to parse uploaded imro file.")
             return
 

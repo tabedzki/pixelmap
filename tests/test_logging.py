@@ -139,3 +139,27 @@ def test_registry_fallback_traceback(monkeypatch, caplog):
     caplog.set_level(logging.DEBUG, logger=atlas.__name__)
     assert atlas.is_downloaded('test') is False
     assert any(r.exc_info and r.exc_info[0] is OSError for r in caplog.records)
+
+
+def test_malformed_imro_upload_is_not_forwarded(isolated_logging, monkeypatch, caplog):
+    # A bad user upload is the user's problem, not a server fault: keep the
+    # traceback in the logs, toast the user, but don't page the webhook.
+    from pixelmap.gui import gui
+    monkeypatch.setenv('PIXELMAP_ERROR_WEBHOOK_URL', 'https://example.test/errors')
+    post = MagicMock()
+    monkeypatch.setattr(error_reporting.urllib.request, 'urlopen', post)
+    monkeypatch.setattr(error_reporting, '_REPORTER', error_reporting.ErrorReporter(synchronous=True))
+    notify = MagicMock()
+    monkeypatch.setattr(gui, '_notify', notify)
+    monkeypatch.setattr(gui.imro, 'parse_imro_file', lambda text: [('NP1000', 384)])
+    monkeypatch.setattr(gui.imro, 'parse_imro_list', MagicMock(side_effect=ValueError('bad imro')))
+    configure()
+    caplog.set_level(logging.DEBUG, logger='pixelmap')
+    logging.getLogger('pixelmap').addHandler(caplog.handler)
+    fake = SimpleNamespace(imro_file_loader=SimpleNamespace(value=b'(0,384)', filename='x.imro'))
+    gui.ChannelmapGUI.apply_uploaded_imro(fake)
+    record = next(r for r in caplog.records if 'uploaded imro' in r.getMessage())
+    assert record.levelno == logging.WARNING
+    assert record.exc_info[0] is ValueError
+    notify.assert_called_once()
+    post.assert_not_called()
