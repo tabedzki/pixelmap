@@ -1,0 +1,85 @@
+name: Promote dev to main
+
+# Release promotion: move main to exactly the commit dev points at, by
+# fast-forward. No merge commit is created, so dev never looks "behind" main.
+# Fails, without pushing anything, if main has commits dev lacks (a hotfix
+# merged straight to main): merge main into dev first. The "Sync main into
+# dev" workflow opens that PR automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      dev_sha:
+        description: Optional. Promote only if dev is still at this commit (full or short SHA).
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  actions: write  # dispatch Tests on main when pushing with GITHUB_TOKEN
+
+concurrency:
+  group: promote-main
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    env:
+      HAS_PROMOTE_TOKEN: ${{ secrets.PROMOTE_TOKEN != '' }}
+    steps:
+    # A push made with GITHUB_TOKEN does not trigger other workflows, so the
+    # usual `push: main` runs (Tests, image publishing) would be skipped.
+    # Set the PROMOTE_TOKEN secret (a fine-grained PAT or GitHub App token
+    # with contents: write) to have this push behave like a maintainer's.
+    - name: Checkout main
+      uses: actions/checkout@v4
+      with:
+        ref: main
+        fetch-depth: 0
+        token: ${{ secrets.PROMOTE_TOKEN || github.token }}
+
+    - name: Fast-forward main to dev
+      env:
+        DEV_SHA: ${{ inputs.dev_sha }}
+      run: |
+        set -euo pipefail
+        git fetch --no-tags origin dev main
+        main=$(git rev-parse origin/main)
+        dev=$(git rev-parse origin/dev)
+        echo "main: $main"
+        echo "dev:  $dev"
+
+        if [ -n "$DEV_SHA" ] && [ "$dev" != "$(git rev-parse --verify --quiet "$DEV_SHA^{commit}" || true)" ]; then
+          echo "::error::dev is at $dev, not the requested $DEV_SHA. Nothing was pushed."
+          exit 1
+        fi
+        if [ "$main" = "$dev" ]; then
+          echo "main is already at dev; nothing to promote."
+          exit 0
+        fi
+        if ! git merge-base --is-ancestor "$main" "$dev"; then
+          echo "::error::main is not an ancestor of dev, so this is not a fast-forward. Nothing was pushed. Merge main into dev (with a merge commit, not squash or rebase) and run this again. Commits on main missing from dev:"
+          git log --oneline "$dev..$main"
+          exit 1
+        fi
+
+        git merge --ff-only "$dev"
+        # No --force: if main moved since the fetch, the push is rejected.
+        git push origin HEAD:main
+        {
+          echo "### Promoted dev to main"
+          echo
+          echo "\`${main:0:7}\` → \`${dev:0:7}\`"
+          echo
+          echo '```'
+          git log --oneline "$main..$dev"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Run Tests on main
+      if: env.HAS_PROMOTE_TOKEN != 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        echo "::warning::Pushed with GITHUB_TOKEN, so push-triggered workflows on main did not run. Dispatching Tests; set PROMOTE_TOKEN to run the rest."
+        gh workflow run tests.yml --ref main
