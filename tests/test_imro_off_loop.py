@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import io
 import json
 import threading
@@ -100,7 +101,7 @@ def test_download_not_ready_returns_none(gui, monkeypatch, name):
 @pytest.mark.parametrize("name", DOWNLOADS)
 def test_download_callbacks_are_async(gui, name):
     """Panel awaits async callbacks instead of running them inline."""
-    assert asyncio.iscoroutinefunction(getattr(gui, name))
+    assert inspect.iscoroutinefunction(getattr(gui, name))
 
 
 @pytest.mark.parametrize(
