@@ -1,0 +1,53 @@
+name: Sync main into dev
+
+# Safety net for commits that land on main without going through dev (e.g. a
+# hotfix PR merged straight to main). Opens a PR merging main into dev, so
+# the next "Promote dev to main" can fast-forward. Does nothing when dev
+# already contains main, which is the case after every promotion.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: sync-main-to-dev
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    # Creating the PR with GITHUB_TOKEN needs "Allow GitHub Actions to create
+    # and approve pull requests" (Settings → Actions → General). PRs it opens
+    # don't trigger pull_request workflows; PROMOTE_TOKEN, if set, avoids that.
+    - name: Open a main → dev PR if dev is missing commits from main
+      env:
+        GH_TOKEN: ${{ secrets.PROMOTE_TOKEN || github.token }}
+      run: |
+        set -euo pipefail
+        git fetch --no-tags origin main dev
+        if git merge-base --is-ancestor origin/main origin/dev; then
+          echo "dev already contains main; nothing to do."
+          exit 0
+        fi
+        existing=$(gh pr list --base dev --head main --state open --json url --jq '.[0].url // empty')
+        if [ -n "$existing" ]; then
+          echo "Already open: $existing"
+          exit 0
+        fi
+        missing=$(git log --oneline origin/dev..origin/main)
+        body=$(printf '%s\n\n%s\n\n```\n%s\n```\n\n%s\n' \
+          "main has commits that dev does not, so \"Promote dev to main\" cannot fast-forward until they are merged into dev." \
+          "Commits on main missing from dev:" \
+          "$missing" \
+          "**Merge with \"Create a merge commit\".** Squash or rebase merging leaves main's commits out of dev's history, and promotion stays blocked.")
+        gh pr create --base dev --head main --title "chore: merge main into dev" --body "$body"
