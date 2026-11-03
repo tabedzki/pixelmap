@@ -678,23 +678,27 @@ def generate_kilosort_channelmap_dict(imro_list, positions_file):
     # Load position data
     positions_df = _read_probe_csv(positions_file)
 
-    # Create mapping from (shank_id, electrode_id) to position
+    # Index the positions once: (shank, electrode) -> first matching row.
+    # Scanning the table with a boolean mask per selected electrode took
+    # ~130 ms per 384-channel map and ~0.5 s for QuadBase. Float keys, as in
+    # _wiring_index, so int and float IDs match alike.
+    coords = positions_df[["shank", "electrode", "x", "y"]].to_numpy(dtype=float)
+    index = {}
+    for row, key in enumerate(map(tuple, coords[:, :2].tolist())):
+        index.setdefault(key, row)
+
+    rows = []
+    for shank_id, electrode_id in selected_electrodes:
+        row = index.get((float(shank_id), float(electrode_id)))
+        if row is None:
+            raise ValueError(f"Electrode {electrode_id} on shank {shank_id} not found in positions file")
+        rows.append(row)
+
     n_selected = len(selected_electrodes)
     chanMap = np.arange(n_selected)  # Sequential channel indices
-    xc = np.zeros(n_selected)
-    yc = np.zeros(n_selected)
-    kcoords = np.zeros(n_selected, dtype=int)  # shank IDs
-
-    for i, (shank_id, electrode_id) in enumerate(selected_electrodes):
-        # Find position for this electrode
-        mask = (positions_df['shank'] == shank_id) & (positions_df['electrode'] == electrode_id)
-        if not mask.any():
-            raise ValueError(f"Electrode {electrode_id} on shank {shank_id} not found in positions file")
-
-        row = positions_df[mask].iloc[0]
-        xc[i] = row['x']
-        yc[i] = row['y']
-        kcoords[i] = shank_id
+    xc = coords[rows, 2]
+    yc = coords[rows, 3]
+    kcoords = np.asarray(selected_electrodes, dtype=int).reshape(-1, 2)[:, 0]  # shank IDs
 
     kilosort_dict = {
         'chanMap': chanMap,
