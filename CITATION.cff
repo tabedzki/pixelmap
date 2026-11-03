@@ -19,9 +19,9 @@ authors:
 - given-names: Carlos D.
   family-names: Brody
   orcid: https://orcid.org/0000-0002-4201-561X
-version: 1.4.0
-date-released: '2026-09-19'
-doi: 10.5281/zenodo.22850328
+version: 1.5.0
+date-released: '2026-10-30'
+doi: 10.5281/zenodo.22850327
 identifiers:
 - type: doi
   value: 10.5281/zenodo.22850327
@@ -29,6 +29,9 @@ identifiers:
 - type: doi
   value: 10.5281/zenodo.22850328
   description: Zenodo archive of the v1.4.0 JOSS release
+- type: doi
+  value: 10.5281/zenodo.23789043
+  description: Zenodo archive of the v1.5.0 release
 - type: doi
   value: 10.21105/joss.11008
   description: JOSS paper
