@@ -14,6 +14,7 @@ import pandas as pd
 from matplotlib import cm, patches
 from matplotlib.collections import PatchCollection
 
+from ._probe_files import packaged_probe_file
 from .constants import (
     LEGACY_INT_TO_IMRO_FORMAT,
     LEGACY_PROBE_TYPE_MAP,
@@ -702,15 +703,23 @@ def _add_rects(ax, rects, facecolors, zorder=1):
 
 
 def plot_probe_layout(
-    probe_type, imro_list, positions_file, wiring_file, title, figsize=(2, 30), save_plot=False, saveDir=None,
-    anatomy_bands=None, survey_colors=None, survey_range=None
+    probe_type, imro_list, positions_file=None, wiring_file=None, title=None, figsize=(2, 30), save_plot=False,
+    saveDir=None, anatomy_bands=None, survey_colors=None, survey_range=None
 ):
     """
     Create visualization of probe layout with selected electrodes
 
+    positions_file, wiring_file: probe CSVs; default to the packaged ones for probe_type
+    title: plot title (and saved file name); defaults to probe_type
     figsize: (width, height) per shank in inch
 
     """
+    if positions_file is None:
+        positions_file = packaged_probe_file(probe_type, "positions")
+    if wiring_file is None:
+        wiring_file = packaged_probe_file(probe_type, "wiring")
+    if title is None:
+        title = probe_type
 
     # Format parameters
     selected_color = "red"

@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import panel as pn
 
+from pixelmap._probe_files import packaged_probe_file
 from pixelmap.backend import format_imro_string, get_electrodes
 from pixelmap.constants import (
     LEGACY_INT_TO_IMRO_FORMAT,
@@ -231,7 +232,7 @@ def generate_imro_channelmap(
         reference_id: Reference electrode selection ('External', 'Tip', 'Ground')
         probe_subtype: Specific SpikeGLX type number (optional)
         custom_electrodes: list of custom (shank_id, electrode_id) pairs (overrides preset)
-        wiring_file: Path to wiring CSV file
+        wiring_file: Path to wiring CSV file (default: the packaged one for probe_type)
         ap_gain: AP band gain (for 1.0 probes)
         lf_gain: LF band gain (for 1.0 probes)
         hp_filter: High-pass filter setting (for 1.0 probes)
@@ -245,6 +246,8 @@ def generate_imro_channelmap(
     if probe_subtype is None:
         probe_subtype = PROBE_TYPE_MAP[probe_type][0]
 
+    if wiring_file is None:
+        wiring_file = packaged_probe_file(probe_type, "wiring")
     wiring_df = pd.read_csv(wiring_file)
 
     # 2) Select electrodes from presets or custom
