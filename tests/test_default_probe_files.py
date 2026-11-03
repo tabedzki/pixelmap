@@ -74,8 +74,11 @@ def test_generate_imro_channelmap_explicit_wiring_file_wins(tmp_path):
 
 @pytest.mark.parametrize("wiring_file", ["", "   "])
 def test_generate_imro_channelmap_blank_path_is_not_a_default(wiring_file):
-    """Only ``None`` selects the packaged file; a blank string is a caller bug."""
-    with pytest.raises(FileNotFoundError):
+    """Only ``None`` selects the packaged file; a blank string is a caller bug.
+
+    OSError, not FileNotFoundError: a cached reader that resolves paths turns
+    "" into the working directory (IsADirectoryError). Either way it fails."""
+    with pytest.raises(OSError):
         imro.generate_imro_channelmap("1.0", PRESET["1.0"], wiring_file=wiring_file)
 
 
