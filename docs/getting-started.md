@@ -96,17 +96,12 @@ Or use the [online version](https://pixelmap.pni.princeton.edu/app) directly —
 ### Option 2: Python API
 
 ```python
-from pathlib import Path
-
 import pixelmap as cmg
-
-WIRING_DIR = Path(cmg.__file__).parent / "wiring_maps"
 
 # Generate a channel map using a preset
 imro_list = cmg.generate_imro_channelmap(
     probe_type="2.0-4shanks",
     layout_preset="tips_all",
-    wiring_file=WIRING_DIR / "2.0-4shanks_wiring.csv"
 )
 
 # Save to file

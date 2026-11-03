@@ -62,30 +62,29 @@ The following constants are defined in `pixelmap.constants` and re-exported from
 ### Generate a channelmap from a preset
 
 ```python
-from pathlib import Path
-
 import pixelmap as cmg
-
-WIRING_DIR = Path(cmg.__file__).parent / "wiring_maps"
 
 imro_list = cmg.generate_imro_channelmap(
     probe_type="2.0-4shanks",
     layout_preset="tips_all",
-    wiring_file=WIRING_DIR / "2.0-4shanks_wiring.csv"
 )
 
 cmg.save_to_imro_file(imro_list, "my_channelmap.imro")
 ```
 
+`wiring_file` defaults to the wiring map packaged with pixelmap for `probe_type`.
+Pass a path to use a different one. `plot_probe_layout` likewise defaults
+`positions_file`, `wiring_file`, and `title`:
+
+```python
+cmg.plot_probe_layout("2.0-4shanks", imro_list, save_plot=True)  # writes 2.0-4shanks.pdf
+```
+
 ### Generate a channelmap with custom electrodes
 
 ```python
-from pathlib import Path
-
 import numpy as np
 import pixelmap as cmg
-
-WIRING_DIR = Path(cmg.__file__).parent / "wiring_maps"
 
 # Custom electrode selection: array of (shank_id, electrode_id) pairs
 custom = np.array([[0, i] for i in range(384)])
@@ -93,7 +92,6 @@ custom = np.array([[0, i] for i in range(384)])
 imro_list = cmg.generate_imro_channelmap(
     probe_type="1.0",
     custom_electrodes=custom,
-    wiring_file=WIRING_DIR / "1.0_wiring.csv"
 )
 
 cmg.save_to_imro_file(imro_list, "custom_channelmap.imro")

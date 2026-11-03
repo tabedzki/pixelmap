@@ -200,7 +200,6 @@ def test_documented_workflow_round_trips(tmp_path, probe_type, preset):
     imro_list = pixelmap.generate_imro_channelmap(
         probe_type=probe_type,
         layout_preset=preset,
-        wiring_file=str(WIRING_DIR / f"{probe_type}_wiring.csv"),
     )
     path = tmp_path / "my_channelmap.imro"
     pixelmap.save_to_imro_file(imro_list, str(path))
@@ -248,3 +247,25 @@ def test_examples_have_no_absolute_user_paths(path):
 
 def test_example_notebook_is_found():
     assert ROOT / "generate_channel_maps.ipynb" in NOTEBOOKS
+
+
+def test_example_notebook_runs(tmp_path, monkeypatch):
+    """Execute the notebook's code cells (IPython magics skipped) with the default files."""
+    import matplotlib
+
+    matplotlib.use("agg")
+    import matplotlib.pyplot as plt
+
+    notebook = json.loads((ROOT / "generate_channel_maps.ipynb").read_text())
+    monkeypatch.chdir(tmp_path)
+    namespace = {}
+    try:
+        for cell in notebook["cells"]:
+            if cell["cell_type"] != "code":
+                continue
+            source = "".join(cell["source"])
+            code = "\n".join(ln for ln in source.splitlines() if not ln.lstrip().startswith("%"))
+            exec(compile(code, "generate_channel_maps.ipynb", "exec"), namespace)  # noqa: S102 -- our own notebook
+    finally:
+        plt.close("all")
+    assert len(namespace["imro_list"]) == 385
