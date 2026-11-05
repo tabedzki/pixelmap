@@ -1,4 +1,4 @@
-FROM ubuntu:latest
+FROM ubuntu:26.04
 
 RUN apt-get update && apt-get install -y \
    git \
@@ -10,26 +10,34 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 ENV UV_CACHE_DIR=/root/.cache/uv
-# Pin the interpreter. Unpinned, uv downloads the newest CPython, so the image
-# silently changes Python whenever one is released -- and a release can break
-# the build outright (CPython 3.15: dracopy 2.0.0 ships no cp315 wheel and no
-# sdist, so `uv sync` fails). Bump deliberately once dependencies support it.
-ENV UV_PYTHON=3.14
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Keep this uv version in step with setup-uv in the workflows.
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /uvx /bin/
 
 # Copy the project files to the working directory
 
+# .python-version pins the interpreter. Unpinned, uv downloads the newest
+# CPython, so the image silently changes Python whenever one is released -- and
+# a release can break the build outright (CPython 3.15: dracopy 2.0.0 ships no
+# cp315 wheel and no sdist, so `uv sync` fails). Bump it deliberately once
+# dependencies support the new version.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=.python-version,target=.python-version \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --no-dev --frozen --no-install-workspace
 
 
 COPY . /app
 
+# .git isn't in the build context, so the version comes in as an argument.
+# docker-publish.yml sets it; a local build reports this placeholder.
+ARG PIXELMAP_VERSION=0.0.0+local
+
 # Install the Python packages using uv
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --no-dev --frozen
+RUN --mount=type=cache,target=/root/.cache/uv \
+    SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PIXELMAP="$PIXELMAP_VERSION" \
+    uv sync --no-dev --frozen
 
 # Pre-download the common mouse and rat atlases, plus the registry index, so
 # the running container never has to reach the atlas host.  Under

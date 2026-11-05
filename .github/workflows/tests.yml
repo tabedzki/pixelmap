@@ -2,10 +2,17 @@ name: Tests
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, dev ]
+    branches: [ main, 'release/**' ]
   workflow_dispatch:  # Allow manual triggering
+  workflow_call:  # docker-publish.yml runs these before it publishes an image
+    secrets:
+      CODECOV_TOKEN:
+        required: false
+
+permissions:
+  contents: read
 
 jobs:
   lint:
@@ -14,11 +21,14 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # setuptools-scm reads the version from tags
 
     # ruff is a standalone binary, so the runner's own Python is enough here.
     - name: Set up uv
       uses: astral-sh/setup-uv@v10.3.3  # no floating major tags since v8
       with:
+        version: '0.13.7'  # keep in step with the Dockerfile
         cache-suffix: lint
 
     # uv.lock pins the ruff version, so CI and local runs check the same rules.
@@ -27,19 +37,21 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    env:
-      # Keep in step with UV_PYTHON in the Dockerfile: test what ships.
-      UV_PYTHON: '3.14'
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # setuptools-scm reads the version from tags
 
     - name: Set up uv
       uses: astral-sh/setup-uv@v10.3.3  # no floating major tags since v8
       with:
+        version: '0.13.7'  # keep in step with the Dockerfile
         cache-suffix: test
 
+    # uv takes the Python version from .python-version, as the Dockerfile does,
+    # so this tests what ships.
     # --locked installs exactly uv.lock and fails if the lockfile is out of
     # date with pyproject.toml.
     - name: Install dependencies
@@ -51,6 +63,6 @@ jobs:
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
       with:
-        file: ./coverage.xml
-        fail_ci_if_error: false
-      continue-on-error: true
+        files: ./coverage.xml
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false  # PRs from forks have no token

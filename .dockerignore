@@ -1,3 +1,6 @@
 # Ignore information related to secrets
 .env
 .venv
+
+# Version comes in as a build argument; history would only bloat the image
+.git

@@ -1,10 +1,8 @@
 services:
   pixelmap:
-    # Pinned, not `latest`. Every tag build also pushes `latest`, so with
-    # `latest` + `pull_policy: always` a redeploy silently jumps to whatever
-    # was built most recently -- including a release you are trying to roll
-    # back *from*. Override for a one-off with `PIXELMAP_TAG=v1.2.3 docker
-    # compose up -d`.
+    # `latest` is the highest final release: only pushing such a git tag moves
+    # it, and Watchtower then deploys it. To roll back, pin a version here, for
+    # example `ghcr.io/m-beau/pixelmap:v1.4.3`. `edge` is the tip of main.
     image: ghcr.io/m-beau/pixelmap:latest
     container_name: pixelmap
     pull_policy: always

@@ -1,18 +1,37 @@
 name: Build and Push Docker Image
 
+# A merge to main publishes `edge` and `sha-<short sha>`. A vX.Y.Z tag publishes
+# its version tags, and `latest` if it is the highest final release: production
+# follows `latest` through Watchtower, so nothing else may write it.
 on:
   push:
+    branches:
+      - main
     tags:
-      - 'v*'  # Trigger on tags that start with 'v'
-  release:
-    types: [published]
+      - 'v*'
+
+# A newer main build replaces an older one, so `edge` can't go backwards.
+# Tags share a group and run to completion, one at a time: otherwise an older
+# tag could pass the `latest` check, then finish after a newer one.
+concurrency:
+  group: docker-publish-${{ startsWith(github.ref, 'refs/tags/') && 'tags' || github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+permissions:
+  contents: read
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   build-and-push:
+    needs: tests
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -21,6 +40,31 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # setuptools-scm and the `latest` check read the tags
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v10.3.3  # no floating major tags since v8
+      with:
+        version: '0.13.7'  # keep in step with the Dockerfile
+        enable-cache: false
+
+    - name: Check the release tag
+      id: release
+      if: startsWith(github.ref, 'refs/tags/')
+      run: git tag --list 'v*' | python3 scripts/release_tag.py "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+
+    # On a tag, use its name rather than asking setuptools-scm: when v1.6.0rc1
+    # and v1.6.0 are on the same commit, git may describe it as either one.
+    - name: Work out the package version
+      id: version
+      run: |
+        if [ "$GITHUB_REF_TYPE" = tag ]; then
+          version="${GITHUB_REF_NAME#v}"
+        else
+          version="$(uvx --from setuptools-scm==10.3.4 setuptools-scm)"
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -37,12 +81,18 @@ jobs:
       uses: docker/metadata-action@v5
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        # Pre-releases (PEP 440 a/b/rc/dev, e.g. v1.4.1rc1) get only their
-        # own tag, never `latest`: prod pulls `latest` via Watchtower, so an
-        # RC must not roll out on its own. contains() is case-insensitive.
+        # latest=auto would add `latest` on any tag push, pre-releases included.
+        flavor: latest=false
+        # For a pre-release, both pep440 patterns give only the full version.
         tags: |
+          type=edge,branch=main
+          type=sha,format=short,enable={{is_default_branch}}
           type=ref,event=tag
-          type=raw,value=latest,enable=${{ !contains(github.ref_name, 'a') && !contains(github.ref_name, 'b') && !contains(github.ref_name, 'rc') && !contains(github.ref_name, 'dev') }}
+          type=pep440,pattern={{version}}
+          type=pep440,pattern={{major}}.{{minor}}
+          type=raw,value=latest,enable=${{ steps.release.outputs.is_latest == 'true' }}
+        labels: |
+          org.opencontainers.image.version=${{ steps.version.outputs.version }}
 
     - name: Build and push Docker image
       id: build
@@ -53,9 +103,10 @@ jobs:
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
+        build-args: |
+          PIXELMAP_VERSION=${{ steps.version.outputs.version }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
     - name: Image digest
       run: echo ${{ steps.build.outputs.digest }}
-
