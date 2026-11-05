@@ -190,6 +190,14 @@ def test_version_comes_from_git_tags():
     assert "setuptools_scm" in pyproject["tool"]
 
 
+def test_image_version_cannot_come_from_stale_build_state():
+    # uv must rebuild when the version changes, and a local egg-info copied into
+    # the image would otherwise be what importlib.metadata finds in /app.
+    pyproject = tomllib.loads(_read(REPO / "pyproject.toml"))
+    assert {"env": "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PIXELMAP"} in pyproject["tool"]["uv"]["cache-keys"]
+    assert "*.egg-info" in _read(REPO / ".dockerignore").split()
+
+
 def test_image_build_does_not_need_git_history():
     # The workflow passes the version in, so .git stays out of the image.
     assert ".git" in _read(REPO / ".dockerignore").split()

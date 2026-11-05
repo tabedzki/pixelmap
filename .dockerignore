@@ -4,3 +4,7 @@
 
 # Version comes in as a build argument; history would only bloat the image
 .git
+
+# Local build output would shadow the version the image build sets
+*.egg-info
+build

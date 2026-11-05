@@ -54,7 +54,11 @@ version_scheme = "release-branch-semver"
 
 [tool.uv]
 # Without this, uv reuses its cached build and the installed version goes stale.
-cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { git = { commit = true, tags = true } },
+    { env = "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PIXELMAP" },
+]
 
 [tool.setuptools]
 # setuptools-scm would otherwise add every git-tracked file under the package to
