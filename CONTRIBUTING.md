@@ -24,7 +24,7 @@ For significant changes, please open an issue first to discuss your approach.
 1. Fork the repository
 2. Create a branch with a descriptive name (e.g., `feature/your-feature-name` or `fix/bug-description`)
 3. Make your changes and run tests: `pytest`
-4. Push to your fork and open a pull request **to the `dev` branch**
+4. Push to your fork and open a pull request **to the `main` branch**
 
 ## Code Style
 

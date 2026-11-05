@@ -126,6 +126,38 @@ To contribute:
 1. Fork the repository
 2. Create a branch with a descriptive name (e.g., `feature/your-feature-name` or `fix/bug-description`)
 3. Make your changes and run tests: `pytest`
-4. Push to your fork and open a pull request **to the `dev` branch**
+4. Push to your fork and open a pull request **to the `main` branch**
 
 See [CONTRIBUTING.md](https://github.com/m-beau/pixelmap/blob/main/CONTRIBUTING.md) for full guidelines on reporting bugs, requesting features, and code style.
+
+## Releases
+
+`main` is the only long-lived branch, and it holds unreleased code. A release is a git tag: the version comes from tags through setuptools-scm, so there is no version number to bump in the code.
+
+| You push | Python version | Docker image tags |
+|---|---|---|
+| A merge to `main` | `1.6.0.dev4+gabc1234` | `edge`, `sha-abc1234` |
+| Tag `v1.6.0rc1` | `1.6.0rc1` | `v1.6.0rc1`, `1.6.0rc1` |
+| Tag `v1.6.0` | `1.6.0` | `v1.6.0`, `1.6.0`, `1.6`, `latest` |
+
+Production follows `latest` through Watchtower, so **pushing a final release tag deploys it**. Tests must pass before any image is published.
+
+To cut a release:
+
+1. Update the version and date in `CITATION.cff` in a PR, and merge it.
+2. Optionally tag a release candidate and try its image.
+3. Tag the commit and push the tag: `git tag v1.6.0 && git push upstream v1.6.0`.
+
+Tags must look like `vX.Y.Z`, optionally followed by `aN`, `bN` or `rcN`, and `.devN`. The image build fails on anything else.
+
+To fix a release while `main` has changes you don't want to ship yet, branch from its tag, pick the fix onto that branch, and tag it:
+
+```bash
+git switch -c release/1.5.x v1.5.0
+git cherry-pick <commit>
+git tag v1.5.1
+```
+
+Only the highest final release gets `latest`, so `v1.5.1` won't replace `v1.6.0` in production.
+
+To roll back, pin the image in `docker-compose.yml`, for example `ghcr.io/m-beau/pixelmap:v1.4.3`.
