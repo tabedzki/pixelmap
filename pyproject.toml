@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools>=64", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -47,8 +47,19 @@ Documentation = "https://pixelmap-neuropixels.readthedocs.io"
 Repository = "https://github.com/m-beau/pixelmap"
 Issues = "https://github.com/m-beau/pixelmap/issues"
 
-[tool.setuptools.dynamic]
-version = {attr = "pixelmap.__version__"}
+# The version comes from git tags. On main it counts toward the next minor
+# (1.6.0.devN); on a release/1.5.x branch, toward the next patch (1.5.1.devN).
+[tool.setuptools_scm]
+version_scheme = "release-branch-semver"
+
+[tool.uv]
+# Without this, uv reuses its cached build and the installed version goes stale.
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
+
+[tool.setuptools]
+# setuptools-scm would otherwise add every git-tracked file under the package to
+# the wheel. package-data below stays the list of what ships.
+include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]

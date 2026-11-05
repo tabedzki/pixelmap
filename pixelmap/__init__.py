@@ -5,6 +5,9 @@ A Python package for generating channel maps for Neuropixels probes with hardwar
 Includes both a programmatic API and an interactive browser-based GUI.
 """
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
+
 from .backend import (
     find_electrode_coordinates,
     find_forbidden_electrodes,
@@ -69,6 +72,9 @@ __all__ = [
     "save_to_imro_file",
 ]
 
-__version__ = "1.5.0"
+try:
+    __version__ = _dist_version("pixelmap")
+except PackageNotFoundError:  # running from a source tree that isn't installed
+    __version__ = "0+unknown"
 __author__ = "Maxime Beau"
 __email__ = "maxime@princeton.edu"
