@@ -1,12 +1,16 @@
 """Regression tests for the package's public imports and documented API."""
 
 import importlib
+import importlib.metadata
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+from packaging.version import Version
 
 import pixelmap
 from pixelmap import backend, constants, types
@@ -132,8 +136,30 @@ def test_submodules_remain_importable_but_not_star_exported():
 
 
 def test_package_version_remains_accessible():
-    assert re.fullmatch(r"\d+\.\d+\.\d+", pixelmap.__version__)
+    # Between releases this is a dev version such as 1.6.0.dev4+gabc1234.
+    Version(pixelmap.__version__)  # raises InvalidVersion if not PEP 440
+    assert pixelmap.__version__ == importlib.metadata.version("pixelmap")
     assert "__version__" not in pixelmap.__all__
+
+
+def test_version_is_a_placeholder_when_the_package_is_not_installed():
+    # Running from a bare source tree must not break `import pixelmap`.
+    code = (
+        "import importlib.metadata as m\n"
+        "real = m.version\n"
+        "def fake(name):\n"
+        "    if name == 'pixelmap':\n"
+        "        raise m.PackageNotFoundError(name)\n"
+        "    return real(name)\n"
+        "m.version = fake\n"
+        "import pixelmap\n"
+        "print(pixelmap.__version__)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "0+unknown"
+    Version(result.stdout.strip())
 
 
 def test_documented_api_names_resolve():
